@@ -1,7 +1,7 @@
 # taskflow/core/task.py
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, UTC
 from enum import Enum
 from typing import Any, Optional, Callable
 import uuid
@@ -66,16 +66,16 @@ class Task:
     
     def mark_running(self):
         self.status = TaskStatus.RUNNING
-        self.started_at = datetime.utcnow()
+        self.started_at = datetime.now(UTC)
     
     def mark_completed(self, result: Any = None):
         self.status = TaskStatus.COMPLETED
-        self.completed_at = datetime.utcnow()
+        self.completed_at = datetime.now(UTC)
         self.result = result
     
     def mark_failed(self, error: str):
         self.status = TaskStatus.FAILED
-        self.completed_at = datetime.utcnow()
+        self.completed_at = datetime.now(UTC)
         self.error = error
     
     def mark_retrying(self):

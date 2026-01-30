@@ -325,7 +325,7 @@ Contributions welcome! Please:
 
 ## License
 
-MIT License - see LICENSE file
+MIT License
 
 ## Acknowledgments
 

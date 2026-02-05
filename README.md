@@ -21,6 +21,7 @@ A modern Next.js dashboard for the TaskFlow task scheduling and execution system
 
 - Node.js 18+
 - TaskFlow backend running on `http://localhost:8000`
+- Check README.md inside taskflow backend and follow instructions
 
 ## Getting Started
 

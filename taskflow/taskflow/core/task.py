@@ -7,6 +7,13 @@ from typing import Any, Optional, Callable
 import uuid
 
 
+def now_utc() -> datetime:
+    """Timezone-aware current UTC time. Use everywhere instead of datetime.utcnow(),
+    which returns a naive datetime that serializes without an offset and gets
+    misparsed as local time by JS Date()."""
+    return datetime.now(UTC)
+
+
 class TaskStatus(str, Enum):
     PENDING = "pending"
     QUEUED = "queued"
@@ -39,7 +46,7 @@ class Task:
     
     # Metadata
     status: TaskStatus = field(default=TaskStatus.PENDING, compare=False)
-    created_at: datetime = field(default_factory=datetime.utcnow, compare=False)
+    created_at: datetime = field(default_factory=now_utc, compare=False)
     scheduled_at: Optional[datetime] = field(default=None, compare=False)
     started_at: Optional[datetime] = field(default=None, compare=False)
     completed_at: Optional[datetime] = field(default=None, compare=False)
@@ -66,16 +73,16 @@ class Task:
     
     def mark_running(self):
         self.status = TaskStatus.RUNNING
-        self.started_at = datetime.now(UTC)
+        self.started_at = now_utc()
     
     def mark_completed(self, result: Any = None):
         self.status = TaskStatus.COMPLETED
-        self.completed_at = datetime.now(UTC)
+        self.completed_at = now_utc()
         self.result = result
     
     def mark_failed(self, error: str):
         self.status = TaskStatus.FAILED
-        self.completed_at = datetime.now(UTC)
+        self.completed_at = now_utc()
         self.error = error
     
     def mark_retrying(self):

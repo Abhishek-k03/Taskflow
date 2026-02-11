@@ -2,9 +2,8 @@
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from typing import Any, Optional, List
-from datetime import datetime
 from pydantic import BaseModel, Field
-from ..core.task import Task, TaskStatus, TaskPriority
+from ..core.task import Task, TaskStatus, TaskPriority, now_utc
 from ..core.queue import TaskQueue
 from ..core.scheduler import TaskScheduler
 from ..core.registry import task_registry
@@ -217,7 +216,7 @@ async def get_metrics():
     
     return {
         "queue": queue_metrics,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": now_utc().isoformat(),
     }
 
 

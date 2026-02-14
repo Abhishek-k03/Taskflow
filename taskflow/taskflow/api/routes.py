@@ -35,6 +35,8 @@ class TaskCreate(BaseModel):
 class TaskResponse(BaseModel):
     task_id: str
     func_name: str
+    args: list
+    kwargs: dict
     status: str
     priority: int
     created_at: str
@@ -43,6 +45,7 @@ class TaskResponse(BaseModel):
     result: Optional[Any]=None
     error: Optional[str]
     retry_count: int
+    max_retries: int
 
 
 class PeriodicTaskCreate(BaseModel):

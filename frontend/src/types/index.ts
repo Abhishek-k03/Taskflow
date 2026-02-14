@@ -20,6 +20,8 @@ export enum TaskPriority {
 export interface Task {
   task_id: string;
   func_name: string;
+  args: unknown[];
+  kwargs: Record<string, unknown>;
   status: TaskStatus;
   priority: number;
   created_at: string;
@@ -28,6 +30,7 @@ export interface Task {
   result: unknown;
   error: string | null;
   retry_count: number;
+  max_retries: number;
 }
 
 export interface TaskCreate {

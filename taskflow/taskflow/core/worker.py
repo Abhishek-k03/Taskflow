@@ -279,8 +279,6 @@ class WorkerPool:
         try:
             # Resolve function from registry
             func = task_registry.get(task.func_name)
-            if func is None:
-                raise KeyError(f"Task function '{task.func_name}' not registered")
 
             # Bind args + kwargs safely
             callable_fn = partial(func, *task.args, **task.kwargs)
@@ -307,6 +305,14 @@ class WorkerPool:
             error_msg = f"Task exceeded timeout of {task.timeout}s"
             logger.error(f"Task {task.task_id} timed out")
             await self._handle_task_failure(task, error_msg)
+
+        except KeyError:
+            # Unregistered func_name can never succeed on retry - fail fast
+            error_msg = f"Task function '{task.func_name}' not registered"
+            logger.error(f"Task {task.task_id} failed: {error_msg}")
+            task.mark_failed(error_msg)
+            await self.queue.update_task(task)
+            await self._emit_event("task_failed", task)
 
         except Exception as e:
             error_msg = f"{type(e).__name__}: {str(e)}"

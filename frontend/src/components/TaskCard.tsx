@@ -106,10 +106,10 @@ export default function TaskCard({ task, onSelect, index = 0 }: TaskCardProps) {
   };
 
   const priorityColors: Record<number, string> = {
-    0: "text-gray-400 bg-gray-700/50",
-    1: "text-blue-400 bg-blue-900/30",
+    0: "text-red-400 bg-red-900/30",
+    1: "text-orange-400 bg-orange-900/30",
     2: "text-yellow-400 bg-yellow-900/30",
-    3: "text-red-400 bg-red-900/30",
+    3: "text-gray-400 bg-gray-700/50",
   };
 
   return (

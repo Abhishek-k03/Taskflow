@@ -3,8 +3,11 @@
 from dataclasses import dataclass, field
 from datetime import datetime, UTC
 from enum import Enum
+from itertools import count
 from typing import Any, Optional, Callable
 import uuid
+
+_sequence_counter = count()
 
 
 def now_utc() -> datetime:
@@ -37,7 +40,10 @@ class Task:
     
     # Priority first for sorting in PriorityQueue
     priority: int = field(compare=True)
-    
+
+    # Tiebreaker so same-priority tasks come out FIFO instead of arbitrary heap order
+    sequence: int = field(default_factory=lambda: next(_sequence_counter), compare=True)
+
     # Core fields
     task_id: str = field(default_factory=lambda: str(uuid.uuid4()), compare=False)
     func_name: str = field(default="", compare=False)

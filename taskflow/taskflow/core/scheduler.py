@@ -190,8 +190,6 @@ class TaskScheduler:
         
         while self.running:
             try:
-                now = datetime.now()
-                
                 # Check each periodic task
                 for name, periodic_task in list(self.periodic_tasks.items()):
                     if periodic_task.should_run():

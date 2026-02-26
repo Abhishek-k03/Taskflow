@@ -1,0 +1,103 @@
+<!--
+  examples/websocket_client.html
+
+  Minimal WebSocket demo for TaskFlow.
+  Run the server first: python main.py
+  Then open this file directly in a browser.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>TaskFlow WebSocket Demo</title>
+<style>
+  body { font-family: monospace; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.1rem; }
+  #status { font-weight: bold; }
+  #status.connected { color: green; }
+  #status.disconnected { color: red; }
+  .row { margin: 0.5rem 0; }
+  input { padding: 0.3rem; }
+  button { padding: 0.3rem 0.8rem; margin-left: 0.3rem; }
+  #log { border: 1px solid #ccc; height: 320px; overflow-y: auto; padding: 0.5rem; white-space: pre-wrap; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+  <h1>TaskFlow WebSocket Demo</h1>
+  <div class="row">Status: <span id="status" class="disconnected">disconnected</span></div>
+
+  <div class="row">
+    <input id="taskId" placeholder="task_id to subscribe to" size="40" />
+    <button onclick="subscribe()">Subscribe</button>
+    <button onclick="unsubscribe()">Unsubscribe</button>
+    <button onclick="ping()">Ping</button>
+  </div>
+
+  <div id="log"></div>
+
+  <script>
+    const WS_URL = "ws://localhost:8000/ws";
+    const statusEl = document.getElementById("status");
+    const logEl = document.getElementById("log");
+    let ws;
+
+    function log(message) {
+      const line = document.createElement("div");
+      line.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+      logEl.appendChild(line);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function connect() {
+      ws = new WebSocket(WS_URL);
+
+      ws.onopen = () => {
+        statusEl.textContent = "connected";
+        statusEl.className = "connected";
+        log("Connected to " + WS_URL);
+      };
+
+      ws.onmessage = (event) => {
+        log("Received: " + event.data);
+      };
+
+      ws.onclose = () => {
+        statusEl.textContent = "disconnected";
+        statusEl.className = "disconnected";
+        log("Disconnected");
+      };
+
+      ws.onerror = (event) => {
+        log("Error: " + JSON.stringify(event));
+      };
+    }
+
+    function send(message) {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        log("Not connected");
+        return;
+      }
+      ws.send(JSON.stringify(message));
+      log("Sent: " + JSON.stringify(message));
+    }
+
+    function subscribe() {
+      const taskId = document.getElementById("taskId").value.trim();
+      if (!taskId) return;
+      send({ type: "subscribe", task_id: taskId });
+    }
+
+    function unsubscribe() {
+      const taskId = document.getElementById("taskId").value.trim();
+      if (!taskId) return;
+      send({ type: "unsubscribe", task_id: taskId });
+    }
+
+    function ping() {
+      send({ type: "ping" });
+    }
+
+    connect();
+  </script>
+</body>
+</html>

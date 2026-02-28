@@ -25,6 +25,7 @@ export interface Task {
   status: TaskStatus;
   priority: number;
   created_at: string;
+  scheduled_at: string | null;
   started_at: string | null;
   completed_at: string | null;
   result: unknown;

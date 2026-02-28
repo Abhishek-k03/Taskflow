@@ -108,6 +108,7 @@ class Task:
             'status': self.status.value,
             'priority': self.priority,
             'created_at': self.created_at.isoformat(),
+            'scheduled_at': self.scheduled_at.isoformat() if self.scheduled_at else None,
             'started_at': self.started_at.isoformat() if self.started_at else None,
             'completed_at': self.completed_at.isoformat() if self.completed_at else None,
             'result': self.result,

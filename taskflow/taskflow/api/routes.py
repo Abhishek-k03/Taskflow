@@ -40,6 +40,7 @@ class TaskResponse(BaseModel):
     status: str
     priority: int
     created_at: str
+    scheduled_at: Optional[str] = None
     started_at: Optional[str]
     completed_at: Optional[str]
     result: Optional[Any]=None

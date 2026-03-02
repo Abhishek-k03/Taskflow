@@ -6,10 +6,10 @@ tasks in real time.
 
 This is a two-part project:
 
-| Part                               | Path                     | Docs                                       |
-| ----------------------------------- | ------------------------ | ------------------------------------------- |
-| Backend (API, workers, scheduler)  | [`taskflow/`](taskflow/) | [`taskflow/README.md`](taskflow/README.md) |
-| Frontend (dashboard)               | [`frontend/`](frontend/) | [`frontend/README.md`](frontend/README.md) |
+| Part                              | Path                     | Docs                                       |
+| --------------------------------- | ------------------------ | ------------------------------------------ |
+| Backend (API, workers, scheduler) | [`taskflow/`](taskflow/) | [`taskflow/README.md`](taskflow/README.md) |
+| Frontend (dashboard)              | [`frontend/`](frontend/) | [`frontend/README.md`](frontend/README.md) |
 
 ## Quick start
 
@@ -30,11 +30,6 @@ npm run dev
 
 Then open [http://localhost:3000](http://localhost:3000). The backend serves the API at
 `http://localhost:8000` (docs at `/docs`) and WebSocket updates at `ws://localhost:8000/ws`.
-
-## Roadmap
-
-See [`ROADMAP.md`](ROADMAP.md) for the plan to take this from a single-node demo to a
-containerized, horizontally scalable application.
 
 ## License
 

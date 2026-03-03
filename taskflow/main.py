@@ -12,8 +12,8 @@ from taskflow.core.scheduler import TaskScheduler
 from taskflow.api import routes
 from taskflow.api.websocket import websocket_endpoint, task_event_handler
 
-# Add this after imports, before creating the app
-from examples.sample_tasks import *  # Register all tasks
+# Importing registers all built-in tasks via decorator side effects
+from taskflow.tasks import builtin  # noqa: F401
 
 # Configure logging
 logging.basicConfig(

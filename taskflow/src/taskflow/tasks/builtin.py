@@ -1,8 +1,8 @@
-# examples/sample_tasks.py
+# taskflow/tasks/builtin.py
 
 import time
 import random
-from taskflow.core.registry import task
+from ..core.registry import task
 
 
 @task()
@@ -111,7 +111,7 @@ def register_all_tasks():
     """Convenience function to ensure all tasks are registered"""
     # Tasks are auto-registered via decorator, but this can be used
     # to verify or force registration
-    from taskflow.core.registry import task_registry
+    from ..core.registry import task_registry
     print(f"Registered tasks: {task_registry.list_tasks()}")
 
 

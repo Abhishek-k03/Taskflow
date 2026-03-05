@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Optional
 import logging
 from croniter import croniter
-from .task import Task, TaskPriority
+from .task import Task, TaskPriority, now_utc
 from .queue import TaskQueue
 
 logger = logging.getLogger(__name__)
@@ -45,16 +45,19 @@ class PeriodicTask:
         self.run_count = 0
     
     def _calculate_next_run(self) -> datetime:
-        """Calculate next run time based on cron expression"""
-        now = datetime.now()
-        cron = croniter(self.cron_expression, now)
+        """Calculate next run time based on cron expression.
+
+        Cron is evaluated in UTC, not host-local time, so a schedule fires at
+        the same instant on a laptop and in a container.
+        """
+        cron = croniter(self.cron_expression, now_utc())
         return cron.get_next(datetime)
-    
+
     def should_run(self) -> bool:
         """Check if task should run now"""
         if not self.enabled:
             return False
-        return datetime.now() >= self.next_run
+        return now_utc() >= self.next_run
     
     def create_task_instance(self) -> Task:
         """Create a Task instance for this periodic task"""
@@ -70,7 +73,7 @@ class PeriodicTask:
     
     def mark_executed(self):
         """Mark that task was executed and calculate next run"""
-        self.last_run = datetime.now()
+        self.last_run = now_utc()
         self.run_count += 1
         self.next_run = self._calculate_next_run()
         logger.info(f"Periodic task '{self.func_name}' executed. Next run: {self.next_run}")

@@ -1,0 +1,13 @@
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+tests/
+examples/
+.git/
+*.log
+.env
+.env.local
+.gitignore
+README.md

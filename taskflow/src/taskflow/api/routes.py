@@ -1,25 +1,15 @@
 # taskflow/api/routes.py
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends
 from typing import Any, Optional, List
 from pydantic import BaseModel, Field
 from ..core.task import Task, TaskStatus, TaskPriority, now_utc
 from ..core.queue import TaskQueue
 from ..core.scheduler import TaskScheduler
 from ..core.registry import task_registry
+from .deps import get_queue, get_scheduler
 
 router = APIRouter()
-
-# Will be set by main app
-_queue: Optional[TaskQueue] = None
-_scheduler: Optional[TaskScheduler] = None
-
-
-def init_routes(queue: TaskQueue, scheduler: TaskScheduler):
-    """Initialize routes with queue and scheduler instances"""
-    global _queue, _scheduler
-    _queue = queue
-    _scheduler = scheduler
 
 
 # Pydantic models for API
@@ -52,7 +42,7 @@ class TaskResponse(BaseModel):
 class PeriodicTaskCreate(BaseModel):
     name: str = Field(..., description="Unique name for periodic task")
     func_name: str = Field(..., description="Name of registered task function")
-    cron_expression: str = Field(..., description="Cron expression (e.g., '*/5 * * * *')")
+    cron_expression: str = Field(..., description="Cron expression (e.g., \"*/5 * * * *\")")
     args: List = Field(default_factory=list)
     kwargs: dict = Field(default_factory=dict)
     priority: int = Field(default=TaskPriority.NORMAL.value)
@@ -62,7 +52,7 @@ class PeriodicTaskCreate(BaseModel):
 
 # Task endpoints
 @router.post("/tasks", response_model=TaskResponse, status_code=201)
-async def create_task(task_data: TaskCreate):
+async def create_task(task_data: TaskCreate, queue: TaskQueue = Depends(get_queue)):
     """Submit a new task for execution"""
     # Verify function exists in registry
     try:
@@ -70,10 +60,10 @@ async def create_task(task_data: TaskCreate):
     except KeyError:
         raise HTTPException(
             status_code=404,
-            detail=f"Task function '{task_data.func_name}' not found. "
+            detail=f"Task function \"{task_data.func_name}\" not found. "
                    f"Available tasks: {task_registry.list_tasks()}"
         )
-    
+
     # Create task
     task = Task(
         func_name=task_data.func_name,
@@ -83,71 +73,75 @@ async def create_task(task_data: TaskCreate):
         max_retries=task_data.max_retries,
         timeout=task_data.timeout,
     )
-    
+
     # Enqueue
-    success = await _queue.enqueue(task)
+    success = await queue.enqueue(task)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to enqueue task")
-    
+
     return TaskResponse(**task.to_dict())
 
 
 @router.get("/tasks/{task_id}", response_model=TaskResponse)
-async def get_task(task_id: str):
+async def get_task(task_id: str, queue: TaskQueue = Depends(get_queue)):
     """Get task status and details"""
-    task = await _queue.get_task(task_id)
+    task = await queue.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-    
+
     return TaskResponse(**task.to_dict())
 
 
 @router.get("/tasks", response_model=List[TaskResponse])
 async def list_tasks(
     status: Optional[TaskStatus] = None,
-    limit: int = 100
+    limit: int = 100,
+    queue: TaskQueue = Depends(get_queue),
 ):
     """List all tasks, optionally filtered by status"""
-    tasks = await _queue.get_all_tasks(status)
+    tasks = await queue.get_all_tasks(status)
     tasks = sorted(tasks, key=lambda t: t.created_at, reverse=True)[:limit]
     return [TaskResponse(**t.to_dict()) for t in tasks]
 
 
 @router.get("/tasks/status/pending", response_model=List[TaskResponse])
-async def get_pending_tasks():
+async def get_pending_tasks(queue: TaskQueue = Depends(get_queue)):
     """Get all pending/queued tasks"""
-    tasks = await _queue.get_pending_tasks()
+    tasks = await queue.get_pending_tasks()
     return [TaskResponse(**t.to_dict()) for t in tasks]
 
 
 @router.get("/tasks/status/completed", response_model=List[TaskResponse])
-async def get_completed_tasks():
+async def get_completed_tasks(queue: TaskQueue = Depends(get_queue)):
     """Get all completed tasks"""
-    tasks = await _queue.get_completed_tasks()
+    tasks = await queue.get_completed_tasks()
     return [TaskResponse(**t.to_dict()) for t in tasks]
 
 
 @router.get("/tasks/status/failed", response_model=List[TaskResponse])
-async def get_failed_tasks():
+async def get_failed_tasks(queue: TaskQueue = Depends(get_queue)):
     """Get all failed tasks"""
-    tasks = await _queue.get_failed_tasks()
+    tasks = await queue.get_failed_tasks()
     return [TaskResponse(**t.to_dict()) for t in tasks]
 
 
 # Periodic task endpoints
 @router.post("/periodic-tasks", status_code=201)
-async def create_periodic_task(periodic_task: PeriodicTaskCreate):
+async def create_periodic_task(
+    periodic_task: PeriodicTaskCreate,
+    scheduler: TaskScheduler = Depends(get_scheduler),
+):
     """Create a new periodic task"""
     try:
         task_registry.get(periodic_task.func_name)
     except KeyError:
         raise HTTPException(
             status_code=404,
-            detail=f"Task function '{periodic_task.func_name}' not found"
+            detail=f"Task function \"{periodic_task.func_name}\" not found"
         )
-    
+
     try:
-        _scheduler.add_periodic_task(
+        scheduler.add_periodic_task(
             name=periodic_task.name,
             func_name=periodic_task.func_name,
             cron_expression=periodic_task.cron_expression,
@@ -157,53 +151,53 @@ async def create_periodic_task(periodic_task: PeriodicTaskCreate):
             max_retries=periodic_task.max_retries,
             timeout=periodic_task.timeout,
         )
-        return {"message": f"Periodic task '{periodic_task.name}' created successfully"}
+        return {"message": f"Periodic task \"{periodic_task.name}\" created successfully"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/periodic-tasks")
-async def list_periodic_tasks():
+async def list_periodic_tasks(scheduler: TaskScheduler = Depends(get_scheduler)):
     """List all periodic tasks"""
-    return _scheduler.list_periodic_tasks()
+    return scheduler.list_periodic_tasks()
 
 
 @router.get("/periodic-tasks/{name}")
-async def get_periodic_task(name: str):
+async def get_periodic_task(name: str, scheduler: TaskScheduler = Depends(get_scheduler)):
     """Get periodic task details"""
-    task = _scheduler.get_periodic_task(name)
+    task = scheduler.get_periodic_task(name)
     if not task:
-        raise HTTPException(status_code=404, detail=f"Periodic task '{name}' not found")
-    
+        raise HTTPException(status_code=404, detail=f"Periodic task \"{name}\" not found")
+
     return {
-        'name': name,
-        'func_name': task.func_name,
-        'cron_expression': task.cron_expression,
-        'next_run': task.next_run.isoformat(),
-        'last_run': task.last_run.isoformat() if task.last_run else None,
-        'run_count': task.run_count,
-        'enabled': task.enabled,
+        "name": name,
+        "func_name": task.func_name,
+        "cron_expression": task.cron_expression,
+        "next_run": task.next_run.isoformat(),
+        "last_run": task.last_run.isoformat() if task.last_run else None,
+        "run_count": task.run_count,
+        "enabled": task.enabled,
     }
 
 
 @router.post("/periodic-tasks/{name}/trigger")
-async def trigger_periodic_task(name: str):
+async def trigger_periodic_task(name: str, scheduler: TaskScheduler = Depends(get_scheduler)):
     """Manually trigger a periodic task now"""
-    task_id = await _scheduler.trigger_now(name)
+    task_id = await scheduler.trigger_now(name)
     if not task_id:
-        raise HTTPException(status_code=404, detail=f"Periodic task '{name}' not found")
-    
-    return {"message": f"Triggered periodic task '{name}'", "task_id": task_id}
+        raise HTTPException(status_code=404, detail=f"Periodic task \"{name}\" not found")
+
+    return {"message": f"Triggered periodic task \"{name}\"", "task_id": task_id}
 
 
 @router.delete("/periodic-tasks/{name}")
-async def delete_periodic_task(name: str):
+async def delete_periodic_task(name: str, scheduler: TaskScheduler = Depends(get_scheduler)):
     """Delete a periodic task"""
-    success = _scheduler.remove_periodic_task(name)
+    success = scheduler.remove_periodic_task(name)
     if not success:
-        raise HTTPException(status_code=404, detail=f"Periodic task '{name}' not found")
-    
-    return {"message": f"Periodic task '{name}' deleted"}
+        raise HTTPException(status_code=404, detail=f"Periodic task \"{name}\" not found")
+
+    return {"message": f"Periodic task \"{name}\" deleted"}
 
 
 # System endpoints
@@ -214,10 +208,10 @@ async def list_registered_tasks():
 
 
 @router.get("/metrics")
-async def get_metrics():
+async def get_metrics(queue: TaskQueue = Depends(get_queue)):
     """Get system metrics"""
-    queue_metrics = await _queue.get_metrics()
-    
+    queue_metrics = await queue.get_metrics()
+
     return {
         "queue": queue_metrics,
         "timestamp": now_utc().isoformat(),
@@ -225,7 +219,7 @@ async def get_metrics():
 
 
 @router.post("/system/clear-queue")
-async def clear_queue():
+async def clear_queue(queue: TaskQueue = Depends(get_queue)):
     """Clear all tasks from queue (use with caution!)"""
-    await _queue.clear()
+    await queue.clear()
     return {"message": "Queue cleared"}

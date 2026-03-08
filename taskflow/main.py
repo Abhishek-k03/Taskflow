@@ -44,10 +44,11 @@ async def lifespan(app: FastAPI):
         event_callback=task_event_handler  # Connect to WebSocket handler
     )
     scheduler = TaskScheduler(queue=queue)
-    
-    # Initialize routes with dependencies
-    routes.init_routes(queue, scheduler)
-    
+
+    # Routes and the WebSocket read these off app.state via Depends
+    app.state.queue = queue
+    app.state.scheduler = scheduler
+
     # Start worker pool and scheduler
     await worker_pool.start()
     await scheduler.start()

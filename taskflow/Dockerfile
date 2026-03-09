@@ -35,6 +35,7 @@ USER taskflow
 
 EXPOSE 8000
 
-# Runs uvicorn directly (not `python main.py`), which sidesteps main.py's
-# hardcoded reload=True - that flag only fires inside the __main__ guard.
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# The `taskflow` console script reads TASKFLOW_* settings (role, host, port,
+# reload) at startup instead of the hardcoded values `uvicorn main:app` would
+# use. main.py is still here for local dev (`uvicorn main:app --reload`).
+CMD ["taskflow"]

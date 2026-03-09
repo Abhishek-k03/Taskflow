@@ -19,6 +19,9 @@ dependencies = [
     "croniter>=2.0.5",
 ]
 
+[project.scripts]
+taskflow = "taskflow.cli:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.2.0",

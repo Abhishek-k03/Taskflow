@@ -47,10 +47,13 @@ A modern Next.js dashboard for the TaskFlow task scheduling and execution system
 
 ## Environment Variables
 
-| Variable              | Default                  | Description           |
-| --------------------- | ------------------------ | --------------------- |
-| `NEXT_PUBLIC_API_URL` | `http://localhost:8000`  | TaskFlow API base URL |
-| `NEXT_PUBLIC_WS_URL`  | `ws://localhost:8000/ws` | WebSocket endpoint    |
+The browser always calls this server's same-origin `/api` and `/ws`, which
+`next.config.ts` rewrites to the backend at request time - so the backend URL
+is a server-side setting, not something baked into the browser bundle.
+
+| Variable                | Default                  | Description                    |
+| ------------------------ | ------------------------- | -------------------------------- |
+| `TASKFLOW_BACKEND_URL`  | `http://localhost:8000`  | Backend URL, server-side only  |
 
 ## Project Structure
 

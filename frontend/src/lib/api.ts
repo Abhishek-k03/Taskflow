@@ -9,7 +9,10 @@ import {
   MetricsResponse,
 } from "@/types";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+// Same-origin: the browser always calls this Next.js server's /api and /health,
+// which next.config.ts rewrites to the backend at request time. No build-time
+// backend URL means one built image works against any backend.
+const API_BASE_URL = "";
 const API_V1 = `${API_BASE_URL}/api/v1`;
 
 class ApiError extends Error {

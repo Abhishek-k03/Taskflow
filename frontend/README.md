@@ -47,9 +47,12 @@ A modern Next.js dashboard for the TaskFlow task scheduling and execution system
 
 ## Environment Variables
 
-The browser always calls this server's same-origin `/api` and `/ws`, which
-`next.config.ts` rewrites to the backend at request time - so the backend URL
-is a server-side setting, not something baked into the browser bundle.
+The browser always calls this server's same-origin `/api`, `/health`, and
+`/ws` - the backend URL is a server-side setting, never baked into the
+browser bundle. `/api` and `/health` are Route Handlers that read it fresh
+per request; `/ws` is a `next.config.ts` rewrite, so unlike the other two,
+its backend target is fixed at build time (Next has no App Router API for
+proxying a WebSocket upgrade).
 
 | Variable                | Default                  | Description                    |
 | ------------------------ | ------------------------- | -------------------------------- |

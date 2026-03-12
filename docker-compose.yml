@@ -1,0 +1,41 @@
+services:
+  backend:
+    build:
+      context: ./taskflow
+    ports:
+      - "8000:8000"
+    environment:
+      TASKFLOW_ROLE: all
+      TASKFLOW_CORS_ORIGINS: http://localhost:3000
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        TASKFLOW_BACKEND_URL: http://backend:8000
+    ports:
+      - "3000:3000"
+    environment:
+      TASKFLOW_BACKEND_URL: http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+# This is deliberately just backend (role=all) + frontend, not the full
+# api/worker/scheduler/postgres/redis split the roadmap describes as the
+# target. Separate api/worker processes can't share the in-memory queue -
+# splitting them here would produce containers that start but don't do
+# anything, which is worse than not having them. The full topology lands
+# in Phase 2 once Redis and Postgres are actually wired into the code.

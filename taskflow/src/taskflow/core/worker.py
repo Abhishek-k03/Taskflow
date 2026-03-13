@@ -4,7 +4,7 @@ import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
-from typing import Optional
+from typing import Awaitable, Callable, Optional
 
 from .task import Task
 from .queue import TaskQueue
@@ -21,6 +21,7 @@ class WorkerPool:
         queue: TaskQueue,
         num_workers: int = 4,
         event_callback: Optional[callable] = None,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ):
         self.queue = queue
         self.num_workers = num_workers
@@ -28,6 +29,11 @@ class WorkerPool:
         self.running = False
         self.workers = []
         self.event_callback = event_callback
+        # Only the retry backoff delay goes through this - the idle-poll
+        # sleep in _worker_loop stays real asyncio.sleep, since a test that
+        # wants instant retries still needs the loop to actually wait its
+        # turn between iterations.
+        self.sleep = sleep
 
         logger.info(f"Initialized worker pool with {num_workers} workers")
 
@@ -152,7 +158,7 @@ class WorkerPool:
             f"(attempt {task.retry_count}/{task.max_retries})"
         )
 
-        await asyncio.sleep(backoff_delay)
+        await self.sleep(backoff_delay)
         await self.queue.enqueue(task)
 
     async def _emit_event(self, event_type: str, task: Task):

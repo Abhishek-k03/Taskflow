@@ -92,8 +92,10 @@ class Task:
         self.error = error
     
     def mark_retrying(self):
+        # retry_count is incremented by the caller (WorkerPool), which needs
+        # the post-increment value to decide retry-vs-fail before calling
+        # this. Incrementing here too would double-count every retry.
         self.status = TaskStatus.RETRYING
-        self.retry_count += 1
     
     def can_retry(self) -> bool:
         return self.retry_count < self.max_retries

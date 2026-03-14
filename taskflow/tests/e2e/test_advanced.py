@@ -1,7 +1,12 @@
+import os
 import time
-import requests
 
-BASE_URL = "http://localhost:8000/api/v1"
+import requests
+import pytest
+
+pytestmark = pytest.mark.e2e
+
+BASE_URL = f"{os.environ.get('TASKFLOW_E2E_URL', 'http://localhost:8000')}/api/v1"
 
 
 def wait_for_task(task_id, timeout=20):
@@ -90,6 +95,7 @@ def test_metrics_consistency():
     assert metrics["current_size"] == 0
 
 
+@pytest.mark.slow
 def test_periodic_task_execution():
     resp = requests.post(
         f"{BASE_URL}/periodic-tasks",

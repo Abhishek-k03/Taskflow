@@ -1,7 +1,12 @@
+import os
+
 import requests
 import time
+import pytest
 
-BASE_URL = "http://localhost:8000/api/v1"
+pytestmark = pytest.mark.e2e
+
+BASE_URL = f"{os.environ.get('TASKFLOW_E2E_URL', 'http://localhost:8000')}/api/v1"
 
 
 def test_basic_flow():

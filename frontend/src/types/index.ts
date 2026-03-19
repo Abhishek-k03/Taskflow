@@ -32,6 +32,9 @@ export interface Task {
   error: string | null;
   retry_count: number;
   max_retries: number;
+  timeout: number | null;
+  depends_on: string[];
+  cron_expression: string | null;
 }
 
 export interface TaskCreate {

@@ -1,5 +1,8 @@
+import json
 from datetime import UTC, datetime
 from queue import PriorityQueue
+
+import pytest
 
 from taskflow.core.task import Task, TaskPriority, TaskStatus
 
@@ -132,3 +135,108 @@ def test_to_dict_includes_all_fields_needed_for_the_api():
 def test_to_dict_created_at_serializes_with_utc_offset():
     task = Task(priority=2, func_name="x")
     assert task.to_dict()["created_at"].endswith("+00:00")
+
+
+# --- Serialization round trip (the Phase 2 blocker) ---------------------
+
+
+def _json_round_trip(task: Task) -> Task:
+    """Simulate what a Redis stream would actually do: to_dict(), through
+    real JSON (not just a Python dict copy), then from_dict()."""
+    payload = json.loads(json.dumps(task.to_dict()))
+    return Task.from_dict(payload)
+
+
+def test_round_trip_preserves_core_fields():
+    original = Task(
+        priority=1,
+        func_name="add_numbers",
+        args=(1, 2),
+        kwargs={"x": 1},
+        max_retries=5,
+        timeout=30,
+        depends_on=["other-task-id"],
+        cron_expression="*/5 * * * *",
+    )
+    restored = _json_round_trip(original)
+
+    assert restored.task_id == original.task_id
+    assert restored.func_name == original.func_name
+    assert restored.args == original.args
+    assert restored.kwargs == original.kwargs
+    assert restored.priority == original.priority
+    assert restored.max_retries == original.max_retries
+    assert restored.timeout == original.timeout
+    assert restored.depends_on == original.depends_on
+    assert restored.cron_expression == original.cron_expression
+    assert restored.status == original.status
+
+
+def test_round_trip_preserves_args_as_a_tuple():
+    # JSON has no tuple type - round-tripping through it turns args into a
+    # list unless from_dict() explicitly converts it back.
+    original = Task(priority=2, func_name="x", args=(1, "two", 3.0))
+    restored = _json_round_trip(original)
+    assert isinstance(restored.args, tuple)
+    assert restored.args == (1, "two", 3.0)
+
+
+def test_round_trip_preserves_aware_timestamps():
+    original = Task(priority=2, func_name="x")
+    original.mark_running()
+    original.mark_completed(result=1)
+
+    restored = _json_round_trip(original)
+
+    assert restored.created_at == original.created_at
+    assert restored.started_at == original.started_at
+    assert restored.completed_at == original.completed_at
+    assert restored.started_at.tzinfo is not None
+    assert restored.completed_at.tzinfo is not None
+
+
+def test_round_trip_preserves_status_and_result():
+    original = Task(priority=2, func_name="x")
+    original.mark_completed(result={"nested": [1, 2, 3]})
+
+    restored = _json_round_trip(original)
+
+    assert restored.status == TaskStatus.COMPLETED
+    assert restored.result == {"nested": [1, 2, 3]}
+
+
+def test_round_trip_preserves_error_and_retry_count():
+    original = Task(priority=2, func_name="x", max_retries=3)
+    original.retry_count = 2
+    original.mark_failed("boom")
+
+    restored = _json_round_trip(original)
+
+    assert restored.status == TaskStatus.FAILED
+    assert restored.error == "boom"
+    assert restored.retry_count == 2
+    assert restored.max_retries == 3
+
+
+def test_round_trip_gives_a_fresh_sequence_not_the_original():
+    # sequence is deliberately excluded from the wire format - see
+    # to_dict()'s docstring. A round-tripped task is a "new" task as far as
+    # this process's local FIFO tie-breaking is concerned.
+    original = Task(priority=2, func_name="x")
+    restored = _json_round_trip(original)
+    assert restored.sequence != original.sequence
+
+
+def test_to_dict_rejects_non_json_serializable_result():
+    task = Task(priority=2, func_name="x")
+    task.mark_completed(result=object())  # arbitrary object, not JSON-safe
+
+    with pytest.raises(TypeError, match="not JSON-serializable"):
+        task.to_dict()
+
+
+def test_to_dict_accepts_json_safe_result_types():
+    for result in (None, 42, 3.14, "text", True, [1, 2], {"a": 1}):
+        task = Task(priority=2, func_name="x")
+        task.mark_completed(result=result)
+        assert task.to_dict()["result"] == result

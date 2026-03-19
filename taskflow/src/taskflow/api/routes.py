@@ -37,6 +37,9 @@ class TaskResponse(BaseModel):
     error: Optional[str]
     retry_count: int
     max_retries: int
+    timeout: Optional[int] = None
+    depends_on: List[str] = Field(default_factory=list)
+    cron_expression: Optional[str] = None
 
 
 class PeriodicTaskCreate(BaseModel):

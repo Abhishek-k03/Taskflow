@@ -5,6 +5,7 @@ from datetime import datetime, UTC
 from enum import Enum
 from itertools import count
 from typing import Any, Optional, Callable
+import json
 import uuid
 
 _sequence_counter = count()
@@ -101,7 +102,28 @@ class Task:
         return self.retry_count < self.max_retries
     
     def to_dict(self) -> dict:
-        """Convert to dictionary for serialization"""
+        """Convert to dictionary for serialization.
+
+        This is the wire format: what survives a round trip through JSON (via
+        from_dict()) and, later, a Redis stream. `sequence` is deliberately
+        excluded - it only exists to break FIFO ties in this process's local
+        in-memory heap, has no meaning across processes, and Redis Streams
+        give ordering natively anyway.
+        """
+        # args/kwargs are already JSON-safe - they arrive from the REST API
+        # via Pydantic models that only accept JSON in the first place. result
+        # has no such guarantee: it's whatever the user's task function
+        # returned, so it needs an explicit check with a clear error, not a
+        # cryptic json.dumps() TypeError three layers away in a Redis client.
+        try:
+            json.dumps(self.result)
+        except TypeError as exc:
+            raise TypeError(
+                f"Task {self.task_id} ({self.func_name}) produced a result of "
+                f"type {type(self.result).__name__} that is not JSON-serializable. "
+                f"Task results must be JSON-serializable."
+            ) from exc
+
         return {
             'task_id': self.task_id,
             'func_name': self.func_name,
@@ -117,4 +139,47 @@ class Task:
             'error': self.error,
             'retry_count': self.retry_count,
             'max_retries': self.max_retries,
+            'timeout': self.timeout,
+            'depends_on': self.depends_on,
+            'cron_expression': self.cron_expression,
         }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Task":
+        """Reconstruct a Task from to_dict()'s output.
+
+        A round-tripped task gets a fresh `sequence` from this process's
+        counter, since the original wasn't preserved (see to_dict()) - it
+        loses its old FIFO tie-break position, which only matters for the
+        in-memory queue and is moot once Redis Streams own ordering.
+        """
+        return cls(
+            priority=data['priority'],
+            task_id=data['task_id'],
+            func_name=data['func_name'],
+            # JSON has no tuple type - round-tripping through it turns args
+            # into a list, so it has to be converted back explicitly.
+            args=tuple(data['args']),
+            kwargs=data['kwargs'],
+            status=TaskStatus(data['status']),
+            created_at=datetime.fromisoformat(data['created_at']),
+            scheduled_at=(
+                datetime.fromisoformat(data['scheduled_at'])
+                if data.get('scheduled_at') else None
+            ),
+            started_at=(
+                datetime.fromisoformat(data['started_at'])
+                if data.get('started_at') else None
+            ),
+            completed_at=(
+                datetime.fromisoformat(data['completed_at'])
+                if data.get('completed_at') else None
+            ),
+            result=data.get('result'),
+            error=data.get('error'),
+            retry_count=data.get('retry_count', 0),
+            max_retries=data.get('max_retries', 3),
+            timeout=data.get('timeout'),
+            depends_on=data.get('depends_on') or [],
+            cron_expression=data.get('cron_expression'),
+        )

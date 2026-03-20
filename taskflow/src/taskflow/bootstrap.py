@@ -8,6 +8,8 @@ import logging
 from .config import Settings
 from .core.queue import TaskQueue
 from .core.registry import task_registry
+from .persistence.db import build_engine, build_sessionmaker
+from .persistence.store import TaskStore
 
 logger = logging.getLogger(__name__)
 
@@ -43,5 +45,15 @@ def import_task_modules(modules: list[str]) -> list[str]:
 
 
 def build_queue(settings: Settings) -> TaskQueue:
-    """Construct the task queue from settings."""
-    return TaskQueue(maxsize=settings.max_queue_size)
+    """Construct the task queue from settings.
+
+    Wires in Postgres dual-write only when TASKFLOW_DATABASE_URL is set -
+    local dev and the test suite run with no Postgres at all otherwise.
+    """
+    store = None
+    if settings.database_url:
+        engine = build_engine(settings.database_url)
+        store = TaskStore(build_sessionmaker(engine))
+        logger.info("Postgres dual-write enabled")
+
+    return TaskQueue(maxsize=settings.max_queue_size, store=store)

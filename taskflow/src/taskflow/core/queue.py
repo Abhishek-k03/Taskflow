@@ -2,17 +2,20 @@
 
 import asyncio
 from queue import PriorityQueue, Empty
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, TYPE_CHECKING
 import logging
 from .task import Task, TaskStatus
+
+if TYPE_CHECKING:
+    from ..persistence.store import TaskStore
 
 logger = logging.getLogger(__name__)
 
 
 class TaskQueue:
     """Thread-safe priority queue for tasks"""
-    
-    def __init__(self, maxsize: int = 0):
+
+    def __init__(self, maxsize: int = 0, store: Optional["TaskStore"] = None):
         self._queue = PriorityQueue(maxsize=maxsize)
         self._tasks: Dict[str, Task] = {}  # task_id -> Task
         self._lock = asyncio.Lock()
@@ -21,6 +24,10 @@ class TaskQueue:
             'total_dequeued': 0,
             'current_size': 0,
         }
+        # Optional Postgres dual-write. This dict is still the only thing
+        # every read goes through - a Postgres outage never breaks task
+        # submission or execution, it just stops accumulating history.
+        self.store = store
     
     async def enqueue(self, task: Task) -> bool:
         """Add a task to the queue
@@ -42,8 +49,10 @@ class TaskQueue:
                 self._metrics['current_size'] = self._queue.qsize()
                 
                 logger.info(f"Enqueued task {task.task_id} ({task.func_name}) with priority {task.priority}")
-                return True
-                
+
+            await self._persist_safely(task)
+            return True
+
         except Exception as e:
             logger.error(f"Failed to enqueue task {task.task_id}: {e}")
             return False
@@ -87,6 +96,15 @@ class TaskQueue:
         """Update task in storage"""
         async with self._lock:
             self._tasks[task.task_id] = task
+        await self._persist_safely(task)
+
+    async def _persist_safely(self, task: Task) -> None:
+        if not self.store:
+            return
+        try:
+            await self.store.persist(task)
+        except Exception as e:
+            logger.error(f"Failed to persist task {task.task_id} to Postgres: {e}")
     
     async def get_all_tasks(self, status: Optional[TaskStatus] = None) -> List[Task]:
         """Get all tasks, optionally filtered by status"""

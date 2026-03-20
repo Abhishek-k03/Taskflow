@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     default_max_retries: int = 3
     default_timeout: Optional[int] = None
 
+    # Postgres dual-write. None disables persistence entirely - every write
+    # still goes through TaskQueue's in-memory dict either way, so local dev
+    # and the test suite need no Postgres at all. Set explicitly (docker-compose
+    # does) to start persisting tasks and events alongside the in-memory queue.
+    database_url: Optional[str] = None
+
     # Modules imported at startup so their @task decorators register functions.
     # A typo here yields an empty registry and every submission 404s, so the
     # `taskflow tasks` command exists to check this without starting a server.

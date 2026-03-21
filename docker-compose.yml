@@ -1,4 +1,20 @@
 services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: taskflow
+      POSTGRES_PASSWORD: taskflow
+      POSTGRES_DB: taskflow
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U taskflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   backend:
     build:
       context: ./taskflow
@@ -7,6 +23,10 @@ services:
     environment:
       TASKFLOW_ROLE: all
       TASKFLOW_CORS_ORIGINS: http://localhost:3000
+      TASKFLOW_DATABASE_URL: postgresql+asyncpg://taskflow:taskflow@postgres:5432/taskflow
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 10s
@@ -33,9 +53,17 @@ services:
       retries: 5
       start_period: 5s
 
-# This is deliberately just backend (role=all) + frontend, not the full
-# api/worker/scheduler/postgres/redis split the roadmap describes as the
-# target. Separate api/worker processes can't share the in-memory queue -
-# splitting them here would produce containers that start but don't do
-# anything, which is worse than not having them. The full topology lands
-# in Phase 2 once Redis and Postgres are actually wired into the code.
+volumes:
+  postgres_data:
+
+# Postgres now backs dual-write persistence: TaskQueue writes go to both the
+# in-memory dict and Postgres (tasks + task_events), but every read still
+# comes from memory - see TaskQueue._persist_safely and its docstring. Run
+# `make migrate` before the schema exists; the app itself works with no
+# migration applied too, since persistence is best-effort (see below).
+#
+# Still deliberately just backend (role=all) + frontend + postgres, not the
+# full api/worker/scheduler/redis split the roadmap describes as the target.
+# Separate api/worker processes can't share the in-memory queue - splitting
+# them here would produce containers that start but don't do anything, which
+# is worse than not having them. That lands once Redis is wired in.

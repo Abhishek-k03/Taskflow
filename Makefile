@@ -1,4 +1,4 @@
-.PHONY: up down logs build test
+.PHONY: up down logs build test migrate
 
 up:
 	docker compose up --build
@@ -12,7 +12,11 @@ logs:
 build:
 	docker compose build
 
-# Backend only for now - there's no frontend test script yet, and no
-# migrate target until Alembic/Postgres land in Phase 2.
+# Backend only for now - there's no frontend test script yet.
 test:
 	cd taskflow && pytest
+
+# Run once against a fresh `make up` - persistence works with no schema
+# applied too (best-effort dual-write), it just has nothing to write into.
+migrate:
+	docker compose run --rm backend alembic upgrade head

@@ -26,6 +26,10 @@ WORKDIR /app
 
 COPY --from=builder /opt/venv /opt/venv
 COPY main.py ./main.py
+# Needed for `alembic upgrade head` to run inside this image (see Makefile's
+# migrate target), not for the app itself at runtime.
+COPY alembic.ini ./alembic.ini
+COPY migrations ./migrations
 
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \

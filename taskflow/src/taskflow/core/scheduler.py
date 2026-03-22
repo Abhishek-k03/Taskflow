@@ -6,7 +6,7 @@ from typing import Callable, Dict, Optional
 import logging
 from croniter import croniter
 from .task import Task, TaskPriority, now_utc
-from .queue import TaskQueue
+from ..backends.base import QueueBackend
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +86,7 @@ class PeriodicTask:
 class TaskScheduler:
     """Manages periodic task scheduling"""
     
-    def __init__(self, queue: TaskQueue, now_fn: Callable[[], datetime] = now_utc):
+    def __init__(self, queue: QueueBackend, now_fn: Callable[[], datetime] = now_utc):
         self.queue = queue
         self.now_fn = now_fn
         self.periodic_tasks: Dict[str, PeriodicTask] = {}

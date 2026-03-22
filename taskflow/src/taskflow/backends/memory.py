@@ -1,10 +1,11 @@
-# taskflow/core/queue.py
+# taskflow/backends/memory.py
 
 import asyncio
 from queue import PriorityQueue, Empty
 from typing import Optional, Dict, List, TYPE_CHECKING
 import logging
-from .task import Task, TaskStatus
+from ..core.task import Task, TaskStatus
+from .base import QueueBackend
 
 if TYPE_CHECKING:
     from ..persistence.store import TaskStore
@@ -12,8 +13,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class TaskQueue:
-    """Thread-safe priority queue for tasks"""
+class MemoryQueueBackend(QueueBackend):
+    """In-process priority queue.
+
+    All state lives in this process, so it cannot be shared between an api
+    container and a worker container - it is the local-dev and unit-test
+    backend, not a production one.
+    """
 
     def __init__(self, maxsize: int = 0, store: Optional["TaskStore"] = None):
         self._queue = PriorityQueue(maxsize=maxsize)
@@ -87,6 +93,10 @@ class TaskQueue:
             logger.error(f"Error dequeuing task: {e}")
             return None
     
+    async def ack(self, task: Task) -> None:
+        """No-op: a dequeued task is already gone from the heap here, so
+        there is no delivery to acknowledge (and no orphan recovery)."""
+
     async def get_task(self, task_id: str) -> Optional[Task]:
         """Get task by ID"""
         async with self._lock:
@@ -114,26 +124,11 @@ class TaskQueue:
                 tasks = [t for t in tasks if t.status == status]
             return tasks
     
-    async def get_pending_tasks(self) -> List[Task]:
-        """Get tasks waiting to be executed"""
-        return await self.get_all_tasks(TaskStatus.QUEUED)
-    
-    async def get_completed_tasks(self) -> List[Task]:
-        """Get successfully completed tasks"""
-        return await self.get_all_tasks(TaskStatus.COMPLETED)
-    
-    async def get_failed_tasks(self) -> List[Task]:
-        """Get failed tasks"""
-        return await self.get_all_tasks(TaskStatus.FAILED)
-    
-    def size(self) -> int:
+    async def size(self) -> int:
         """Get current queue size"""
         return self._queue.qsize()
-    
-    def is_empty(self) -> bool:
-        """Check if queue is empty"""
-        return self._queue.empty()
-    
+
+
     async def get_metrics(self) -> dict:
         """Get queue metrics"""
         async with self._lock:

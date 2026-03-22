@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from taskflow.core.queue import TaskQueue
+from taskflow.backends.memory import MemoryQueueBackend
 from taskflow.core.scheduler import PeriodicTask, TaskScheduler
 from taskflow.core.task import TaskStatus
 
@@ -87,7 +87,7 @@ def test_create_task_instance_carries_configured_fields():
 @pytest.mark.asyncio
 async def test_tick_enqueues_only_due_tasks():
     clock = FrozenClock(datetime(2026, 1, 1, 0, 0, tzinfo=UTC))
-    queue = TaskQueue()
+    queue = MemoryQueueBackend()
     scheduler = TaskScheduler(queue=queue, now_fn=clock)
 
     scheduler.add_periodic_task(
@@ -114,7 +114,7 @@ async def test_tick_enqueues_only_due_tasks():
 @pytest.mark.asyncio
 async def test_tick_enqueued_task_is_runnable():
     clock = FrozenClock(datetime(2026, 1, 1, 0, 0, tzinfo=UTC))
-    queue = TaskQueue()
+    queue = MemoryQueueBackend()
     scheduler = TaskScheduler(queue=queue, now_fn=clock)
     scheduler.add_periodic_task(
         name="every_minute", func_name="hello_world", cron_expression="* * * * *"
@@ -129,7 +129,7 @@ async def test_tick_enqueued_task_is_runnable():
 
 
 def test_add_remove_get_list_periodic_tasks():
-    queue = TaskQueue()
+    queue = MemoryQueueBackend()
     scheduler = TaskScheduler(queue=queue)
 
     scheduler.add_periodic_task(
@@ -146,7 +146,7 @@ def test_add_remove_get_list_periodic_tasks():
 @pytest.mark.asyncio
 async def test_trigger_now_enqueues_regardless_of_schedule():
     clock = FrozenClock(datetime(2026, 1, 1, tzinfo=UTC))
-    queue = TaskQueue()
+    queue = MemoryQueueBackend()
     scheduler = TaskScheduler(queue=queue, now_fn=clock)
     scheduler.add_periodic_task(
         name="job", func_name="hello_world", cron_expression="0 0 1 1 *"
@@ -160,5 +160,5 @@ async def test_trigger_now_enqueues_regardless_of_schedule():
 
 @pytest.mark.asyncio
 async def test_trigger_now_missing_task_returns_none():
-    scheduler = TaskScheduler(queue=TaskQueue())
+    scheduler = TaskScheduler(queue=MemoryQueueBackend())
     assert await scheduler.trigger_now("nope") is None

@@ -1,12 +1,12 @@
 import pytest
 
-from taskflow.core.queue import TaskQueue
+from taskflow.backends.memory import MemoryQueueBackend
 from taskflow.core.task import Task, TaskStatus
 
 
 @pytest.mark.asyncio
 async def test_enqueue_dequeue_round_trip():
-    q = TaskQueue()
+    q = MemoryQueueBackend()
     task = Task(priority=2, func_name="x")
     assert await q.enqueue(task) is True
 
@@ -17,13 +17,13 @@ async def test_enqueue_dequeue_round_trip():
 
 @pytest.mark.asyncio
 async def test_dequeue_empty_queue_returns_none():
-    q = TaskQueue()
+    q = MemoryQueueBackend()
     assert await q.dequeue(timeout=0.2) is None
 
 
 @pytest.mark.asyncio
 async def test_dequeue_orders_by_priority_then_fifo():
-    q = TaskQueue()
+    q = MemoryQueueBackend()
     first = Task(priority=2, func_name="first")
     second = Task(priority=2, func_name="second")
     critical = Task(priority=0, func_name="critical")
@@ -39,13 +39,13 @@ async def test_dequeue_orders_by_priority_then_fifo():
 
 @pytest.mark.asyncio
 async def test_get_task_returns_none_for_unknown_id():
-    q = TaskQueue()
+    q = MemoryQueueBackend()
     assert await q.get_task("does-not-exist") is None
 
 
 @pytest.mark.asyncio
 async def test_update_task_persists_changes():
-    q = TaskQueue()
+    q = MemoryQueueBackend()
     task = Task(priority=2, func_name="x")
     await q.enqueue(task)
 
@@ -59,7 +59,7 @@ async def test_update_task_persists_changes():
 
 @pytest.mark.asyncio
 async def test_get_all_tasks_filters_by_status():
-    q = TaskQueue()
+    q = MemoryQueueBackend()
     completed = Task(priority=2, func_name="a")
     completed.mark_completed()
     failed = Task(priority=2, func_name="b")
@@ -79,7 +79,7 @@ async def test_get_all_tasks_filters_by_status():
 
 @pytest.mark.asyncio
 async def test_get_pending_completed_failed_helpers():
-    q = TaskQueue()
+    q = MemoryQueueBackend()
     queued = Task(priority=2, func_name="a")
     await q.enqueue(queued)
     completed = Task(priority=2, func_name="b")
@@ -96,7 +96,7 @@ async def test_get_pending_completed_failed_helpers():
 
 @pytest.mark.asyncio
 async def test_metrics_track_enqueue_dequeue_and_status_counts():
-    q = TaskQueue()
+    q = MemoryQueueBackend()
     task = Task(priority=2, func_name="a")
     await q.enqueue(task)
     await q.dequeue(timeout=1)
@@ -113,20 +113,21 @@ async def test_metrics_track_enqueue_dequeue_and_status_counts():
 
 @pytest.mark.asyncio
 async def test_clear_removes_all_tasks_and_resets_size():
-    q = TaskQueue()
+    q = MemoryQueueBackend()
     await q.enqueue(Task(priority=2, func_name="a"))
     await q.enqueue(Task(priority=2, func_name="b"))
 
     await q.clear()
 
-    assert q.size() == 0
-    assert q.is_empty() is True
+    assert await q.size() == 0
+    assert await q.is_empty() is True
     assert await q.get_all_tasks() == []
     metrics = await q.get_metrics()
     assert metrics["current_size"] == 0
 
 
-def test_size_and_is_empty_reflect_queue_state():
-    q = TaskQueue()
-    assert q.is_empty() is True
-    assert q.size() == 0
+@pytest.mark.asyncio
+async def test_size_and_is_empty_reflect_queue_state():
+    q = MemoryQueueBackend()
+    assert await q.is_empty() is True
+    assert await q.size() == 0

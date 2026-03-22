@@ -2,13 +2,13 @@ import asyncio
 
 import pytest
 
-from taskflow.core.queue import TaskQueue
+from taskflow.backends.memory import MemoryQueueBackend
 from taskflow.core.registry import task_registry
 from taskflow.core.task import Task, TaskStatus
 from taskflow.core.worker import WorkerPool
 
 
-async def _run_to_terminal(queue: TaskQueue, task_id: str, attempts: int = 200):
+async def _run_to_terminal(queue: MemoryQueueBackend, task_id: str, attempts: int = 200):
     """Poll until the task leaves QUEUED/RUNNING/RETRYING, or fail the test."""
     for _ in range(attempts):
         task = await queue.get_task(task_id)
@@ -35,7 +35,7 @@ async def test_task_completes_successfully(recording_sleep):
     def add(a, b):
         return a + b
 
-    queue = TaskQueue()
+    queue = MemoryQueueBackend()
     pool = WorkerPool(queue=queue, num_workers=1, sleep=recording_sleep)
     task = Task(priority=2, func_name="wt_add", args=(2, 3))
     await queue.enqueue(task)
@@ -57,7 +57,7 @@ async def test_retry_backoff_sequence_and_final_failure(recording_sleep):
     def always_fail():
         raise RuntimeError("boom")
 
-    queue = TaskQueue()
+    queue = MemoryQueueBackend()
     pool = WorkerPool(queue=queue, num_workers=1, sleep=recording_sleep)
     task = Task(priority=2, func_name="wt_always_fail", max_retries=3)
     await queue.enqueue(task)
@@ -88,7 +88,7 @@ async def test_task_succeeds_after_a_transient_failure(recording_sleep):
             raise RuntimeError("not yet")
         return "ok"
 
-    queue = TaskQueue()
+    queue = MemoryQueueBackend()
     pool = WorkerPool(queue=queue, num_workers=1, sleep=recording_sleep)
     task = Task(priority=2, func_name="wt_flaky", max_retries=3)
     await queue.enqueue(task)
@@ -107,7 +107,7 @@ async def test_task_succeeds_after_a_transient_failure(recording_sleep):
 
 @pytest.mark.asyncio
 async def test_unregistered_func_name_fails_fast_without_retrying(recording_sleep):
-    queue = TaskQueue()
+    queue = MemoryQueueBackend()
     pool = WorkerPool(queue=queue, num_workers=1, sleep=recording_sleep)
     task = Task(priority=2, func_name="wt_does_not_exist", max_retries=3)
     await queue.enqueue(task)
@@ -131,7 +131,7 @@ async def test_timeout_marks_task_failed(recording_sleep):
 
         time.sleep(2)
 
-    queue = TaskQueue()
+    queue = MemoryQueueBackend()
     pool = WorkerPool(queue=queue, num_workers=1, sleep=recording_sleep)
     task = Task(priority=2, func_name="wt_slow", timeout=0.1, max_retries=0)
     await queue.enqueue(task)

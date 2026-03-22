@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from typing import Any, Optional, List
 from pydantic import BaseModel, Field
 from ..core.task import Task, TaskStatus, TaskPriority, now_utc
-from ..core.queue import TaskQueue
+from ..backends.base import QueueBackend
 from ..core.scheduler import TaskScheduler
 from ..core.registry import task_registry
 from .deps import get_queue, get_scheduler
@@ -55,7 +55,7 @@ class PeriodicTaskCreate(BaseModel):
 
 # Task endpoints
 @router.post("/tasks", response_model=TaskResponse, status_code=201)
-async def create_task(task_data: TaskCreate, queue: TaskQueue = Depends(get_queue)):
+async def create_task(task_data: TaskCreate, queue: QueueBackend = Depends(get_queue)):
     """Submit a new task for execution"""
     # Verify function exists in registry
     try:
@@ -86,7 +86,7 @@ async def create_task(task_data: TaskCreate, queue: TaskQueue = Depends(get_queu
 
 
 @router.get("/tasks/{task_id}", response_model=TaskResponse)
-async def get_task(task_id: str, queue: TaskQueue = Depends(get_queue)):
+async def get_task(task_id: str, queue: QueueBackend = Depends(get_queue)):
     """Get task status and details"""
     task = await queue.get_task(task_id)
     if not task:
@@ -99,7 +99,7 @@ async def get_task(task_id: str, queue: TaskQueue = Depends(get_queue)):
 async def list_tasks(
     status: Optional[TaskStatus] = None,
     limit: int = 100,
-    queue: TaskQueue = Depends(get_queue),
+    queue: QueueBackend = Depends(get_queue),
 ):
     """List all tasks, optionally filtered by status"""
     tasks = await queue.get_all_tasks(status)
@@ -108,21 +108,21 @@ async def list_tasks(
 
 
 @router.get("/tasks/status/pending", response_model=List[TaskResponse])
-async def get_pending_tasks(queue: TaskQueue = Depends(get_queue)):
+async def get_pending_tasks(queue: QueueBackend = Depends(get_queue)):
     """Get all pending/queued tasks"""
     tasks = await queue.get_pending_tasks()
     return [TaskResponse(**t.to_dict()) for t in tasks]
 
 
 @router.get("/tasks/status/completed", response_model=List[TaskResponse])
-async def get_completed_tasks(queue: TaskQueue = Depends(get_queue)):
+async def get_completed_tasks(queue: QueueBackend = Depends(get_queue)):
     """Get all completed tasks"""
     tasks = await queue.get_completed_tasks()
     return [TaskResponse(**t.to_dict()) for t in tasks]
 
 
 @router.get("/tasks/status/failed", response_model=List[TaskResponse])
-async def get_failed_tasks(queue: TaskQueue = Depends(get_queue)):
+async def get_failed_tasks(queue: QueueBackend = Depends(get_queue)):
     """Get all failed tasks"""
     tasks = await queue.get_failed_tasks()
     return [TaskResponse(**t.to_dict()) for t in tasks]
@@ -211,7 +211,7 @@ async def list_registered_tasks():
 
 
 @router.get("/metrics")
-async def get_metrics(queue: TaskQueue = Depends(get_queue)):
+async def get_metrics(queue: QueueBackend = Depends(get_queue)):
     """Get system metrics"""
     queue_metrics = await queue.get_metrics()
 
@@ -222,7 +222,7 @@ async def get_metrics(queue: TaskQueue = Depends(get_queue)):
 
 
 @router.post("/system/clear-queue")
-async def clear_queue(queue: TaskQueue = Depends(get_queue)):
+async def clear_queue(queue: QueueBackend = Depends(get_queue)):
     """Clear all tasks from queue (use with caution!)"""
     await queue.clear()
     return {"message": "Queue cleared"}

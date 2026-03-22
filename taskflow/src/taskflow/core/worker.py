@@ -7,7 +7,7 @@ from functools import partial
 from typing import Awaitable, Callable, Optional
 
 from .task import Task
-from .queue import TaskQueue
+from ..backends.base import QueueBackend
 from .registry import task_registry
 
 logger = logging.getLogger(__name__)
@@ -18,7 +18,7 @@ class WorkerPool:
 
     def __init__(
         self,
-        queue: TaskQueue,
+        queue: QueueBackend,
         num_workers: int = 4,
         event_callback: Optional[callable] = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
@@ -133,6 +133,18 @@ class WorkerPool:
                 f"Task {task.task_id} failed: {error_msg}", exc_info=True
             )
             await self._handle_task_failure(task, error_msg)
+
+        finally:
+            # Release this worker's claim on the delivery. By here the task
+            # has either reached a terminal state or been re-enqueued as a
+            # fresh delivery, so losing this process would no longer lose the
+            # work. Crashing *before* this point leaves the entry pending, to
+            # be reclaimed by another worker (see RedisQueueBackend's
+            # XAUTOCLAIM); a no-op on the in-memory backend.
+            try:
+                await self.queue.ack(task)
+            except Exception as e:
+                logger.error(f"Failed to ack task {task.task_id}: {e}")
 
     async def _handle_task_failure(self, task: Task, error_msg: str):
         # Increment retry count FIRST

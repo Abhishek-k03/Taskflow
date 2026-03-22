@@ -9,11 +9,11 @@ between tests and no risk of one process's globals bleeding into another.
 
 from fastapi import Request
 
-from ..core.queue import TaskQueue
+from ..backends.base import QueueBackend
 from ..core.scheduler import TaskScheduler
 
 
-def get_queue(request: Request) -> TaskQueue:
+def get_queue(request: Request) -> QueueBackend:
     return request.app.state.queue
 
 

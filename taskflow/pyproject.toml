@@ -20,6 +20,7 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0.30",
     "asyncpg>=0.29.0",
     "alembic>=1.13.0",
+    "redis>=5.0.0",
 ]
 
 [project.scripts]
@@ -43,4 +44,5 @@ addopts = "--strict-markers -m 'not e2e and not slow'"
 markers = [
     "e2e: requires a running TaskFlow server",
     "slow: takes more than a few seconds",
+    "redis: requires a reachable Redis (skipped automatically if absent)",
 ]

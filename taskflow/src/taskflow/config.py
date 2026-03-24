@@ -8,6 +8,19 @@ from pydantic import field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
+class QueueBackendKind(str, Enum):
+    """Which queue backend to construct.
+
+    `memory` is the local-dev and unit-test backend: its state lives in one
+    process, so an api container and a worker container cannot share it.
+    `redis` is the one that survives a restart and can be shared, and is the
+    only supported multi-process configuration.
+    """
+
+    MEMORY = "memory"
+    REDIS = "redis"
+
+
 class Role(str, Enum):
     """Which parts of the system this process runs.
 
@@ -48,6 +61,13 @@ class Settings(BaseSettings):
     # and the test suite need no Postgres at all. Set explicitly (docker-compose
     # does) to start persisting tasks and events alongside the in-memory queue.
     database_url: Optional[str] = None
+
+    # Queue backend selection. Still defaults to memory: swapping the default
+    # to redis is a separate, deliberate step (it is what makes tasks survive
+    # a restart and lets roles be split across processes), not a side effect
+    # of the Redis backend merely existing.
+    queue_backend: QueueBackendKind = QueueBackendKind.MEMORY
+    redis_url: str = "redis://localhost:6379"
 
     # Modules imported at startup so their @task decorators register functions.
     # A typo here yields an empty registry and every submission 404s, so the

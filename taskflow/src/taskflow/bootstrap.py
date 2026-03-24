@@ -5,7 +5,7 @@
 import importlib
 import logging
 
-from .config import Settings
+from .config import QueueBackendKind, Settings
 from .backends.base import QueueBackend
 from .backends.memory import MemoryQueueBackend
 from .core.registry import task_registry
@@ -57,4 +57,13 @@ def build_queue(settings: Settings) -> QueueBackend:
         store = TaskStore(build_sessionmaker(engine))
         logger.info("Postgres dual-write enabled")
 
+    if settings.queue_backend is QueueBackendKind.REDIS:
+        # Imported lazily so a memory-backend deployment never needs the
+        # redis client importable.
+        from .backends.redis import RedisQueueBackend
+
+        logger.info(f"Using Redis queue backend at {settings.redis_url}")
+        return RedisQueueBackend(settings.redis_url, store=store)
+
+    logger.info("Using in-memory queue backend (single process only)")
     return MemoryQueueBackend(maxsize=settings.max_queue_size, store=store)

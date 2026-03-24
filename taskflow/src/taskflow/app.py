@@ -62,6 +62,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await app.state.scheduler.stop()
         if app.state.worker_pool:
             await app.state.worker_pool.stop()
+        # Releases the Redis connection pool; a no-op on the memory backend.
+        await queue.close()
         logger.info("TaskFlow shutdown complete")
 
     app = FastAPI(

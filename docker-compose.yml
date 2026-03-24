@@ -15,6 +15,18 @@ services:
       timeout: 3s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   backend:
     build:
       context: ./taskflow
@@ -24,8 +36,11 @@ services:
       TASKFLOW_ROLE: all
       TASKFLOW_CORS_ORIGINS: http://localhost:3000
       TASKFLOW_DATABASE_URL: postgresql+asyncpg://taskflow:taskflow@postgres:5432/taskflow
+      TASKFLOW_REDIS_URL: redis://redis:6379
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
@@ -55,15 +70,17 @@ services:
 
 volumes:
   postgres_data:
+  redis_data:
 
-# Postgres now backs dual-write persistence: TaskQueue writes go to both the
-# in-memory dict and Postgres (tasks + task_events), but every read still
-# comes from memory - see TaskQueue._persist_safely and its docstring. Run
-# `make migrate` before the schema exists; the app itself works with no
-# migration applied too, since persistence is best-effort (see below).
+# Postgres backs dual-write persistence: queue writes go to both the backend's
+# own store and Postgres (tasks + task_events), but every read still comes
+# from the queue backend - see _persist_safely. Run `make migrate` to create
+# the schema; the app works without it too, since dual-write is best-effort.
 #
-# Still deliberately just backend (role=all) + frontend + postgres, not the
-# full api/worker/scheduler/redis split the roadmap describes as the target.
-# Separate api/worker processes can't share the in-memory queue - splitting
-# them here would produce containers that start but don't do anything, which
-# is worse than not having them. That lands once Redis is wired in.
+# Redis is running here, but the backend still defaults to the in-memory
+# queue: TASKFLOW_QUEUE_BACKEND is deliberately not set to `redis` yet.
+# Flipping it is what makes tasks survive a restart and lets api/worker/
+# scheduler run as separate processes, so it is its own deliberate step with
+# no in-memory fallback afterwards - not a side effect of adding the service.
+# Until then, splitting the roles would give containers that start but share
+# no queue, which is worse than not splitting them.

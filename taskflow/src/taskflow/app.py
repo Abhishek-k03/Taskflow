@@ -19,8 +19,8 @@ from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api import routes
-from .api.websocket import websocket_endpoint, task_event_handler
-from .bootstrap import build_queue, import_task_modules
+from .api.websocket import websocket_endpoint, deliver_event
+from .bootstrap import build_event_bus, build_queue, import_task_modules
 from .config import Role, Settings
 from .core.scheduler import TaskScheduler
 from .core.worker import WorkerPool
@@ -38,15 +38,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         import_task_modules(settings.task_modules)
 
         queue = build_queue(settings)
+        event_bus = build_event_bus(settings)
         app.state.queue = queue
+        app.state.event_bus = event_bus
         app.state.worker_pool = None
         app.state.scheduler = None
+
+        # Only the api role holds WebSocket connections, so only it consumes
+        # events. A worker publishes but never subscribes.
+        if settings.role in (Role.API, Role.ALL):
+            await event_bus.start(deliver_event)
 
         if settings.role in (Role.WORKER, Role.ALL):
             app.state.worker_pool = WorkerPool(
                 queue=queue,
                 num_workers=settings.num_workers,
-                event_callback=task_event_handler,
+                event_callback=event_bus.publish,
             )
             await app.state.worker_pool.start()
 
@@ -62,6 +69,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await app.state.scheduler.stop()
         if app.state.worker_pool:
             await app.state.worker_pool.stop()
+        await event_bus.stop()
         # Releases the Redis connection pool; a no-op on the memory backend.
         await queue.close()
         logger.info("TaskFlow shutdown complete")

@@ -9,6 +9,7 @@ from .config import QueueBackendKind, Settings
 from .backends.base import QueueBackend
 from .backends.memory import MemoryQueueBackend
 from .core.registry import task_registry
+from .events import EventBus, LocalEventBus, RedisEventBus
 from .persistence.db import build_engine, build_sessionmaker
 from .persistence.store import TaskStore
 
@@ -67,3 +68,18 @@ def build_queue(settings: Settings) -> QueueBackend:
 
     logger.info("Using in-memory queue backend (single process only)")
     return MemoryQueueBackend(maxsize=settings.max_queue_size, store=store)
+
+
+def build_event_bus(settings: Settings) -> EventBus:
+    """Pick the event fan-out to match the queue backend.
+
+    These go together: a Redis queue means work can run in a different
+    process from the WebSocket connections, which is exactly when in-process
+    event delivery stops reaching anyone.
+    """
+    if settings.queue_backend is QueueBackendKind.REDIS:
+        logger.info("Using Redis pub/sub for task events")
+        return RedisEventBus(settings.redis_url)
+
+    logger.info("Using in-process task events (single process only)")
+    return LocalEventBus()

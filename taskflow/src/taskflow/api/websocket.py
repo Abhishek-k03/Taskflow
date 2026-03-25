@@ -103,21 +103,18 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
-async def task_event_handler(event_type: str, task):
-    """Handle task events and broadcast to WebSocket clients
-    
-    This is called by WorkerPool when task events occur
+async def deliver_event(message: dict):
+    """Deliver one task event to this process's WebSocket clients.
+
+    Called with an already-built message (see events.build_event_message) -
+    either directly by LocalEventBus, or by RedisEventBus for an event that
+    may have originated in another process entirely.
+
+    Every connection gets every event, because the dashboard and task list
+    both render from the same stream. Task subscribers are therefore already
+    covered by this broadcast; sending to them separately as well only
+    delivered the same message to them twice.
     """
-    message = {
-        'type': event_type,
-        'task': task.to_dict(),
-        'timestamp': task.completed_at.isoformat() if task.completed_at else task.created_at.isoformat(),
-    }
-    
-    # Send to task-specific subscribers
-    await manager.send_to_task_subscribers(task.task_id, message)
-    
-    # Also broadcast to all connections for dashboard
     await manager.broadcast(message)
 
 

@@ -11,6 +11,11 @@ from .backends.memory import MemoryQueueBackend
 from .core.registry import task_registry
 from .events import EventBus, LocalEventBus, RedisEventBus
 from .persistence.db import build_engine, build_sessionmaker
+from .persistence.periodic import (
+    InMemoryPeriodicTaskRepository,
+    PeriodicTaskRepository,
+    PostgresPeriodicTaskRepository,
+)
 from .persistence.store import TaskStore
 
 logger = logging.getLogger(__name__)
@@ -68,6 +73,23 @@ def build_queue(settings: Settings) -> QueueBackend:
 
     logger.info("Using in-memory queue backend (single process only)")
     return MemoryQueueBackend(maxsize=settings.max_queue_size, store=store)
+
+
+def build_periodic_repository(settings: Settings) -> PeriodicTaskRepository:
+    """Where periodic definitions live.
+
+    Postgres when one is configured, so the api and scheduler processes see
+    the same schedules and they survive a restart. Without it, definitions
+    stay in this process - fine for local dev, which is single-process
+    anyway, but not something to split roles on top of.
+    """
+    if settings.database_url:
+        engine = build_engine(settings.database_url)
+        logger.info("Periodic task definitions stored in Postgres")
+        return PostgresPeriodicTaskRepository(build_sessionmaker(engine))
+
+    logger.info("Periodic task definitions kept in memory (single process only)")
+    return InMemoryPeriodicTaskRepository()
 
 
 def build_event_bus(settings: Settings) -> EventBus:

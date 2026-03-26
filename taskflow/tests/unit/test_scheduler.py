@@ -5,6 +5,7 @@ import pytest
 from taskflow.backends.memory import MemoryQueueBackend
 from taskflow.core.scheduler import PeriodicTask, TaskScheduler
 from taskflow.core.task import TaskStatus
+from taskflow.persistence.periodic import InMemoryPeriodicTaskRepository
 
 
 class FrozenClock:
@@ -84,42 +85,53 @@ def test_create_task_instance_carries_configured_fields():
     assert task.cron_expression == "* * * * *"
 
 
+@pytest.fixture
+def repository():
+    return InMemoryPeriodicTaskRepository()
+
+
+async def _add(repository, clock, **kwargs):
+    task = PeriodicTask(now_fn=clock, **kwargs)
+    await repository.add(task)
+    return task
+
+
 @pytest.mark.asyncio
-async def test_tick_enqueues_only_due_tasks():
+async def test_tick_enqueues_only_due_tasks(repository):
     clock = FrozenClock(datetime(2026, 1, 1, 0, 0, tzinfo=UTC))
     queue = MemoryQueueBackend()
-    scheduler = TaskScheduler(queue=queue, now_fn=clock)
+    scheduler = TaskScheduler(queue=queue, repository=repository, now_fn=clock)
 
-    scheduler.add_periodic_task(
-        name="every_minute", func_name="hello_world", cron_expression="* * * * *"
+    every_minute = await _add(
+        repository, clock, name="every_minute",
+        func_name="hello_world", cron_expression="* * * * *",
     )
-    scheduler.add_periodic_task(
-        name="every_hour", func_name="hello_world", cron_expression="0 * * * *"
+    await _add(
+        repository, clock, name="every_hour",
+        func_name="hello_world", cron_expression="0 * * * *",
     )
 
-    # Nothing is due yet.
     await scheduler.tick()
     assert (await queue.get_metrics())["total_enqueued"] == 0
 
-    # Advance the clock 1 minute: only the every-minute task is due.
-    clock.now = scheduler.periodic_tasks["every_minute"].next_run
+    clock.now = every_minute.next_run
     await scheduler.tick()
 
-    metrics = await queue.get_metrics()
-    assert metrics["total_enqueued"] == 1
-    assert scheduler.periodic_tasks["every_minute"].run_count == 1
-    assert scheduler.periodic_tasks["every_hour"].run_count == 0
+    assert (await queue.get_metrics())["total_enqueued"] == 1
+    assert (await repository.get("every_minute")).run_count == 1
+    assert (await repository.get("every_hour")).run_count == 0
 
 
 @pytest.mark.asyncio
-async def test_tick_enqueued_task_is_runnable():
+async def test_tick_enqueued_task_is_runnable(repository):
     clock = FrozenClock(datetime(2026, 1, 1, 0, 0, tzinfo=UTC))
     queue = MemoryQueueBackend()
-    scheduler = TaskScheduler(queue=queue, now_fn=clock)
-    scheduler.add_periodic_task(
-        name="every_minute", func_name="hello_world", cron_expression="* * * * *"
+    scheduler = TaskScheduler(queue=queue, repository=repository, now_fn=clock)
+    definition = await _add(
+        repository, clock, name="every_minute",
+        func_name="hello_world", cron_expression="* * * * *",
     )
-    clock.now = scheduler.periodic_tasks["every_minute"].next_run
+    clock.now = definition.next_run
 
     await scheduler.tick()
     dequeued = await queue.dequeue(timeout=1)
@@ -128,37 +140,76 @@ async def test_tick_enqueued_task_is_runnable():
     assert dequeued.status == TaskStatus.QUEUED
 
 
-def test_add_remove_get_list_periodic_tasks():
-    queue = MemoryQueueBackend()
-    scheduler = TaskScheduler(queue=queue)
-
-    scheduler.add_periodic_task(
-        name="job", func_name="hello_world", cron_expression="* * * * *"
-    )
-    assert scheduler.get_periodic_task("job") is not None
-    assert "job" in scheduler.list_periodic_tasks()
-
-    assert scheduler.remove_periodic_task("job") is True
-    assert scheduler.get_periodic_task("job") is None
-    assert scheduler.remove_periodic_task("job") is False
-
-
 @pytest.mark.asyncio
-async def test_trigger_now_enqueues_regardless_of_schedule():
-    clock = FrozenClock(datetime(2026, 1, 1, tzinfo=UTC))
+async def test_tick_persists_schedule_state(repository):
+    """next_run/last_run/run_count must go back to the repository, or a
+    scheduler restart would re-fire the same slot."""
+    clock = FrozenClock(datetime(2026, 1, 1, 0, 0, tzinfo=UTC))
     queue = MemoryQueueBackend()
-    scheduler = TaskScheduler(queue=queue, now_fn=clock)
-    scheduler.add_periodic_task(
-        name="job", func_name="hello_world", cron_expression="0 0 1 1 *"
-    )  # next run is a year away
+    scheduler = TaskScheduler(queue=queue, repository=repository, now_fn=clock)
+    definition = await _add(
+        repository, clock, name="job",
+        func_name="hello_world", cron_expression="*/5 * * * *",
+    )
+    first_slot = definition.next_run
 
-    task_id = await scheduler.trigger_now("job")
+    clock.now = first_slot
+    await scheduler.tick()
 
-    assert task_id is not None
+    stored = await repository.get("job")
+    assert stored.run_count == 1
+    assert stored.last_run == first_slot
+    assert stored.next_run > first_slot
+
+    await scheduler.tick()
     assert (await queue.get_metrics())["total_enqueued"] == 1
 
 
 @pytest.mark.asyncio
-async def test_trigger_now_missing_task_returns_none():
-    scheduler = TaskScheduler(queue=MemoryQueueBackend())
-    assert await scheduler.trigger_now("nope") is None
+async def test_scheduler_picks_up_definitions_added_after_it_started(repository):
+    """The whole point of the repository: something else (the api process)
+    can add a schedule and this scheduler sees it on the next tick."""
+    clock = FrozenClock(datetime(2026, 1, 1, 0, 0, tzinfo=UTC))
+    queue = MemoryQueueBackend()
+    scheduler = TaskScheduler(queue=queue, repository=repository, now_fn=clock)
+
+    await scheduler.tick()
+    assert (await queue.get_metrics())["total_enqueued"] == 0
+
+    added_later = await _add(
+        repository, clock, name="added_later",
+        func_name="hello_world", cron_expression="* * * * *",
+    )
+    clock.now = added_later.next_run
+    await scheduler.tick()
+
+    assert (await queue.get_metrics())["total_enqueued"] == 1
+
+
+@pytest.mark.asyncio
+async def test_disabled_definition_is_not_fired(repository):
+    clock = FrozenClock(datetime(2026, 1, 1, 0, 0, tzinfo=UTC))
+    queue = MemoryQueueBackend()
+    scheduler = TaskScheduler(queue=queue, repository=repository, now_fn=clock)
+    definition = await _add(
+        repository, clock, name="off", func_name="hello_world",
+        cron_expression="* * * * *", enabled=False,
+    )
+    clock.now = definition.next_run
+
+    await scheduler.tick()
+    assert (await queue.get_metrics())["total_enqueued"] == 0
+
+
+@pytest.mark.asyncio
+async def test_repository_add_get_list_remove(repository):
+    await repository.add(
+        PeriodicTask(name="job", func_name="hello_world", cron_expression="* * * * *")
+    )
+
+    assert (await repository.get("job")) is not None
+    assert [t.name for t in await repository.list_all()] == ["job"]
+
+    assert await repository.remove("job") is True
+    assert await repository.get("job") is None
+    assert await repository.remove("job") is False

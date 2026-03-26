@@ -63,11 +63,10 @@ async def test_health_reports_empty_worker_stats_when_role_is_api_only(api_clien
 
 
 @pytest.mark.asyncio
-async def test_create_list_trigger_delete_periodic_task(running_client):
-    # Periodic-task endpoints need a real scheduler, which role=api alone
-    # does not start (see Phase 2's "scheduler cannot be split out until
-    # periodic definitions live in Postgres" constraint) - role=all here.
-    create = await running_client.post(
+async def test_create_list_trigger_delete_periodic_task(api_client):
+    # These work under role=api with no scheduler running at all: the
+    # endpoints go through the periodic repository, not a scheduler object.
+    create = await api_client.post(
         "/api/v1/periodic-tasks",
         json={
             "name": "job",
@@ -77,17 +76,20 @@ async def test_create_list_trigger_delete_periodic_task(running_client):
     )
     assert create.status_code == 201
 
-    listing = await running_client.get("/api/v1/periodic-tasks")
+    listing = await api_client.get("/api/v1/periodic-tasks")
     assert "job" in listing.json()
+    # `name` is returned, not just used as the map key - the frontend type
+    # declares it required.
+    assert listing.json()["job"]["name"] == "job"
 
-    trigger = await running_client.post("/api/v1/periodic-tasks/job/trigger")
+    trigger = await api_client.post("/api/v1/periodic-tasks/job/trigger")
     assert trigger.status_code == 200
     assert "task_id" in trigger.json()
 
-    delete = await running_client.delete("/api/v1/periodic-tasks/job")
+    delete = await api_client.delete("/api/v1/periodic-tasks/job")
     assert delete.status_code == 200
 
-    listing_after = await running_client.get("/api/v1/periodic-tasks")
+    listing_after = await api_client.get("/api/v1/periodic-tasks")
     assert "job" not in listing_after.json()
 
 
@@ -105,8 +107,8 @@ async def test_periodic_task_unknown_func_name_returns_404(api_client):
 
 
 @pytest.mark.asyncio
-async def test_trigger_unknown_periodic_task_returns_404(running_client):
-    resp = await running_client.post("/api/v1/periodic-tasks/does-not-exist/trigger")
+async def test_trigger_unknown_periodic_task_returns_404(api_client):
+    resp = await api_client.post("/api/v1/periodic-tasks/does-not-exist/trigger")
     assert resp.status_code == 404
 
 

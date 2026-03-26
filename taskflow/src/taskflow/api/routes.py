@@ -5,9 +5,10 @@ from typing import Any, Optional, List
 from pydantic import BaseModel, Field
 from ..core.task import Task, TaskStatus, TaskPriority, now_utc
 from ..backends.base import QueueBackend
-from ..core.scheduler import TaskScheduler
+from ..core.scheduler import PeriodicTask
 from ..core.registry import task_registry
-from .deps import get_queue, get_scheduler
+from ..persistence.periodic import PeriodicTaskRepository
+from .deps import get_queue, get_periodic_repository
 
 router = APIRouter()
 
@@ -129,10 +130,22 @@ async def get_failed_tasks(queue: QueueBackend = Depends(get_queue)):
 
 
 # Periodic task endpoints
+def _serialize(task: PeriodicTask) -> dict:
+    return {
+        "name": task.name,
+        "func_name": task.func_name,
+        "cron_expression": task.cron_expression,
+        "next_run": task.next_run.isoformat(),
+        "last_run": task.last_run.isoformat() if task.last_run else None,
+        "run_count": task.run_count,
+        "enabled": task.enabled,
+    }
+
+
 @router.post("/periodic-tasks", status_code=201)
 async def create_periodic_task(
     periodic_task: PeriodicTaskCreate,
-    scheduler: TaskScheduler = Depends(get_scheduler),
+    repository: PeriodicTaskRepository = Depends(get_periodic_repository),
 ):
     """Create a new periodic task"""
     try:
@@ -144,7 +157,7 @@ async def create_periodic_task(
         )
 
     try:
-        scheduler.add_periodic_task(
+        definition = PeriodicTask(
             name=periodic_task.name,
             func_name=periodic_task.func_name,
             cron_expression=periodic_task.cron_expression,
@@ -154,50 +167,61 @@ async def create_periodic_task(
             max_retries=periodic_task.max_retries,
             timeout=periodic_task.timeout,
         )
-        return {"message": f"Periodic task \"{periodic_task.name}\" created successfully"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    await repository.add(definition)
+    return {"message": f"Periodic task \"{periodic_task.name}\" created successfully"}
+
 
 @router.get("/periodic-tasks")
-async def list_periodic_tasks(scheduler: TaskScheduler = Depends(get_scheduler)):
+async def list_periodic_tasks(
+    repository: PeriodicTaskRepository = Depends(get_periodic_repository),
+):
     """List all periodic tasks"""
-    return scheduler.list_periodic_tasks()
+    return {task.name: _serialize(task) for task in await repository.list_all()}
 
 
 @router.get("/periodic-tasks/{name}")
-async def get_periodic_task(name: str, scheduler: TaskScheduler = Depends(get_scheduler)):
+async def get_periodic_task(
+    name: str,
+    repository: PeriodicTaskRepository = Depends(get_periodic_repository),
+):
     """Get periodic task details"""
-    task = scheduler.get_periodic_task(name)
+    task = await repository.get(name)
     if not task:
         raise HTTPException(status_code=404, detail=f"Periodic task \"{name}\" not found")
 
-    return {
-        "name": name,
-        "func_name": task.func_name,
-        "cron_expression": task.cron_expression,
-        "next_run": task.next_run.isoformat(),
-        "last_run": task.last_run.isoformat() if task.last_run else None,
-        "run_count": task.run_count,
-        "enabled": task.enabled,
-    }
+    return _serialize(task)
 
 
 @router.post("/periodic-tasks/{name}/trigger")
-async def trigger_periodic_task(name: str, scheduler: TaskScheduler = Depends(get_scheduler)):
-    """Manually trigger a periodic task now"""
-    task_id = await scheduler.trigger_now(name)
-    if not task_id:
+async def trigger_periodic_task(
+    name: str,
+    repository: PeriodicTaskRepository = Depends(get_periodic_repository),
+    queue: QueueBackend = Depends(get_queue),
+):
+    """Manually trigger a periodic task now.
+
+    Enqueues directly rather than asking the scheduler to, so this works from
+    an api process that runs no scheduler of its own.
+    """
+    periodic_task = await repository.get(name)
+    if not periodic_task:
         raise HTTPException(status_code=404, detail=f"Periodic task \"{name}\" not found")
 
-    return {"message": f"Triggered periodic task \"{name}\"", "task_id": task_id}
+    task = periodic_task.create_task_instance()
+    await queue.enqueue(task)
+    return {"message": f"Triggered periodic task \"{name}\"", "task_id": task.task_id}
 
 
 @router.delete("/periodic-tasks/{name}")
-async def delete_periodic_task(name: str, scheduler: TaskScheduler = Depends(get_scheduler)):
+async def delete_periodic_task(
+    name: str,
+    repository: PeriodicTaskRepository = Depends(get_periodic_repository),
+):
     """Delete a periodic task"""
-    success = scheduler.remove_periodic_task(name)
-    if not success:
+    if not await repository.remove(name):
         raise HTTPException(status_code=404, detail=f"Periodic task \"{name}\" not found")
 
     return {"message": f"Periodic task \"{name}\" deleted"}

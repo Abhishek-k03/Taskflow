@@ -45,4 +45,5 @@ markers = [
     "e2e: requires a running TaskFlow server",
     "slow: takes more than a few seconds",
     "redis: requires a reachable Redis (skipped automatically if absent)",
+    "postgres: requires a reachable Postgres (skipped automatically if absent)",
 ]

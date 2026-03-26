@@ -20,7 +20,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .api import routes
 from .api.websocket import websocket_endpoint, deliver_event
-from .bootstrap import build_event_bus, build_queue, import_task_modules
+from .bootstrap import (
+    build_event_bus,
+    build_periodic_repository,
+    build_queue,
+    import_task_modules,
+)
 from .config import Role, Settings
 from .core.scheduler import TaskScheduler
 from .core.worker import WorkerPool
@@ -39,8 +44,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         queue = build_queue(settings)
         event_bus = build_event_bus(settings)
+        # Every role gets the repository, including api-without-scheduler:
+        # the periodic-task endpoints operate on it directly.
+        periodic_repository = build_periodic_repository(settings)
         app.state.queue = queue
         app.state.event_bus = event_bus
+        app.state.periodic_repository = periodic_repository
         app.state.worker_pool = None
         app.state.scheduler = None
 
@@ -58,7 +67,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await app.state.worker_pool.start()
 
         if settings.role in (Role.SCHEDULER, Role.ALL):
-            app.state.scheduler = TaskScheduler(queue=queue)
+            app.state.scheduler = TaskScheduler(
+                queue=queue, repository=periodic_repository
+            )
             await app.state.scheduler.start()
 
         logger.info("TaskFlow started successfully!")

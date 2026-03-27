@@ -27,39 +27,64 @@ services:
       timeout: 3s
       retries: 10
 
-  backend:
+  api:
     build:
       context: ./taskflow
     ports:
       - "8000:8000"
     environment:
-      TASKFLOW_ROLE: all
-      TASKFLOW_CORS_ORIGINS: http://localhost:3000
-      TASKFLOW_DATABASE_URL: postgresql+asyncpg://taskflow:taskflow@postgres:5432/taskflow
-      TASKFLOW_REDIS_URL: redis://redis:6379
-    depends_on:
+      <<: &backend_env
+        TASKFLOW_QUEUE_BACKEND: redis
+        TASKFLOW_REDIS_URL: redis://redis:6379
+        TASKFLOW_DATABASE_URL: postgresql+asyncpg://taskflow:taskflow@postgres:5432/taskflow
+        TASKFLOW_CORS_ORIGINS: http://localhost:3000
+      TASKFLOW_ROLE: api
+    depends_on: &backend_deps
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    healthcheck:
+    healthcheck: &backend_healthcheck
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 10s
       timeout: 3s
       retries: 5
       start_period: 5s
 
+  worker:
+    build:
+      context: ./taskflow
+    # Deliberately no host port: this is the service you scale
+    # (`docker compose up --scale worker=3`), and a published port would
+    # collide on the second replica.
+    environment:
+      <<: *backend_env
+      TASKFLOW_ROLE: worker
+    depends_on: *backend_deps
+    healthcheck: *backend_healthcheck
+
+  scheduler:
+    build:
+      context: ./taskflow
+    # Must stay at one replica until the leader lock lands - two schedulers
+    # would each fire every cron job, duplicating work.
+    environment:
+      <<: *backend_env
+      TASKFLOW_ROLE: scheduler
+    depends_on: *backend_deps
+    healthcheck: *backend_healthcheck
+
   frontend:
     build:
       context: ./frontend
       args:
-        TASKFLOW_BACKEND_URL: http://backend:8000
+        TASKFLOW_BACKEND_URL: http://api:8000
     ports:
       - "3000:3000"
     environment:
-      TASKFLOW_BACKEND_URL: http://backend:8000
+      TASKFLOW_BACKEND_URL: http://api:8000
     depends_on:
-      backend:
+      api:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
@@ -72,15 +97,11 @@ volumes:
   postgres_data:
   redis_data:
 
-# Postgres backs dual-write persistence: queue writes go to both the backend's
-# own store and Postgres (tasks + task_events), but every read still comes
-# from the queue backend - see _persist_safely. Run `make migrate` to create
-# the schema; the app works without it too, since dual-write is best-effort.
+# api, worker and scheduler are the same image running different roles, and
+# they only work as separate containers because they share state rather than
+# holding it: the queue is Redis, task events travel over Redis pub/sub, and
+# periodic definitions live in Postgres. On the in-memory backend each
+# container would get its own private queue and the api would accept tasks no
+# worker could ever see.
 #
-# Redis is running here, but the backend still defaults to the in-memory
-# queue: TASKFLOW_QUEUE_BACKEND is deliberately not set to `redis` yet.
-# Flipping it is what makes tasks survive a restart and lets api/worker/
-# scheduler run as separate processes, so it is its own deliberate step with
-# no in-memory fallback afterwards - not a side effect of adding the service.
-# Until then, splitting the roles would give containers that start but share
-# no queue, which is worse than not splitting them.
+# Run `make migrate` once before first use to create the Postgres schema.

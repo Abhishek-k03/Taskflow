@@ -50,6 +50,7 @@ TASK_KEY = f"{KEY_PREFIX}:task:{{task_id}}"
 INDEX_KEY = f"{KEY_PREFIX}:index"
 STATUS_KEY = f"{KEY_PREFIX}:status:{{status}}"
 METRICS_KEY = f"{KEY_PREFIX}:metrics"
+WORKER_KEY = f"{KEY_PREFIX}:worker:{{worker_id}}"
 
 
 class RedisQueueBackend(QueueBackend):
@@ -370,6 +371,51 @@ class RedisQueueBackend(QueueBackend):
         self._groups_ready = False
         await self._ensure_groups()
         logger.info("Queue cleared")
+
+    # --- worker heartbeats ---------------------------------------------
+
+    async def record_worker_heartbeat(
+        self, worker_id: str, stats: dict, ttl_seconds: int
+    ) -> None:
+        """SETEX so the key disappears on its own if this process stops
+        refreshing it - a killed worker drops out of /health without needing
+        anyone to notice it died."""
+        await self._redis.set(
+            WORKER_KEY.format(worker_id=worker_id),
+            json.dumps(stats),
+            ex=ttl_seconds,
+        )
+
+    async def aggregate_worker_stats(self) -> dict:
+        """Sum the live heartbeats into the same shape a single WorkerPool
+        reports, so /health looks identical before and after the role split."""
+        cursor = 0
+        keys: list[str] = []
+        while True:
+            cursor, batch = await self._redis.scan(
+                cursor, match=WORKER_KEY.format(worker_id="*"), count=100
+            )
+            keys.extend(batch)
+            if cursor == 0:
+                break
+
+        if not keys:
+            return {"num_workers": 0, "running": False, "active_workers": 0}
+
+        num_workers = 0
+        active_workers = 0
+        for payload in await self._redis.mget(keys):
+            if not payload:
+                continue  # expired between SCAN and MGET
+            stats = json.loads(payload)
+            num_workers += stats.get("num_workers", 0)
+            active_workers += stats.get("active_workers", 0)
+
+        return {
+            "num_workers": num_workers,
+            "running": active_workers > 0,
+            "active_workers": active_workers,
+        }
 
     async def close(self) -> None:
         await self._redis.aclose()

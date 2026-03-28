@@ -122,7 +122,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         worker_pool = app.state.worker_pool
 
         queue_metrics = await queue.get_metrics() if queue else {}
-        worker_stats = await worker_pool.get_stats() if worker_pool else {}
+
+        # This process's own pool when it has one; otherwise the live worker
+        # heartbeats from Redis. Either way the shape is identical, because
+        # the dashboard reads health.workers.active_workers with no guard on
+        # the second hop.
+        if worker_pool:
+            worker_stats = await worker_pool.get_stats()
+        else:
+            worker_stats = await queue.aggregate_worker_stats()
 
         return {
             "status": "healthy",

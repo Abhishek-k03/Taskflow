@@ -54,12 +54,15 @@ async def test_registered_tasks_lists_builtins(api_client):
 
 
 @pytest.mark.asyncio
-async def test_health_reports_empty_worker_stats_when_role_is_api_only(api_client):
+async def test_health_keeps_the_worker_shape_when_role_is_api_only(api_client):
+    """role=api runs no WorkerPool, but the dashboard reads
+    health.workers.active_workers with no guard on that second hop - so the
+    keys have to be there regardless."""
     resp = await api_client.get("/health")
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "healthy"
-    assert body["workers"] == {}  # no WorkerPool running under role=api
+    assert set(body["workers"]) == {"num_workers", "running", "active_workers"}
 
 
 @pytest.mark.asyncio

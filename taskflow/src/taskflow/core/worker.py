@@ -2,6 +2,9 @@
 
 import asyncio
 import logging
+import os
+import socket
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from typing import Awaitable, Callable, Optional
@@ -22,6 +25,7 @@ class WorkerPool:
         num_workers: int = 4,
         event_callback: Optional[callable] = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        heartbeat_interval: float = 5.0,
     ):
         self.queue = queue
         self.num_workers = num_workers
@@ -34,6 +38,13 @@ class WorkerPool:
         # wants instant retries still needs the loop to actually wait its
         # turn between iterations.
         self.sleep = sleep
+
+        # Identifies this worker process in /health. Host plus pid keeps it
+        # readable, and the uuid suffix keeps two containers on the same host
+        # from colliding.
+        self.worker_id = f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:6]}"
+        self.heartbeat_interval = heartbeat_interval
+        self._heartbeat_task = None
 
         logger.info(f"Initialized worker pool with {num_workers} workers")
 
@@ -48,12 +59,21 @@ class WorkerPool:
             asyncio.create_task(self._worker_loop(i))
             for i in range(self.num_workers)
         ]
+        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
         logger.info("Worker pool started")
 
     async def stop(self, wait: bool = True):
         logger.info("Stopping worker pool...")
         self.running = False
+
+        if self._heartbeat_task:
+            self._heartbeat_task.cancel()
+            try:
+                await self._heartbeat_task
+            except asyncio.CancelledError:
+                pass
+            self._heartbeat_task = None
 
         if wait:
             await asyncio.gather(*self.workers, return_exceptions=True)
@@ -180,6 +200,23 @@ class WorkerPool:
             await self.event_callback(event_type, task)
         except Exception as e:
             logger.error(f"Error in event callback: {e}")
+
+    async def _heartbeat_loop(self):
+        """Publish this process's worker stats on a TTL.
+
+        The api process runs no workers of its own once roles are split, so
+        this is the only way /health can still report how many workers exist.
+        The TTL means a killed worker stops being counted on its own.
+        """
+        ttl = max(int(self.heartbeat_interval * 3), 2)
+        while self.running:
+            try:
+                await self.queue.record_worker_heartbeat(
+                    self.worker_id, await self.get_stats(), ttl
+                )
+            except Exception as e:
+                logger.error(f"Failed to publish worker heartbeat: {e}")
+            await asyncio.sleep(self.heartbeat_interval)
 
     async def get_stats(self) -> dict:
         return {

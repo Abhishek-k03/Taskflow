@@ -80,5 +80,25 @@ class QueueBackend(ABC):
     async def get_failed_tasks(self) -> List[Task]:
         return await self.get_all_tasks(TaskStatus.FAILED)
 
+    async def record_worker_heartbeat(
+        self, worker_id: str, stats: dict, ttl_seconds: int
+    ) -> None:
+        """Announce that this worker process is alive, with its stats.
+
+        Expires on its own after ttl_seconds, so a worker that dies stops
+        being counted without anything having to clean up after it. No-op
+        unless the backend is shared between processes.
+        """
+
+    async def aggregate_worker_stats(self) -> dict:
+        """Worker stats gathered across every live worker process.
+
+        The api process runs no workers of its own once roles are split, but
+        /health must keep returning this exact shape - the dashboard reads
+        `health?.workers.active_workers`, where the optional chaining guards
+        `health` and not the second hop.
+        """
+        return {"num_workers": 0, "running": False, "active_workers": 0}
+
     async def close(self) -> None:
         """Release any connections. No-op unless the backend holds some."""

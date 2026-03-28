@@ -2,7 +2,12 @@
 
 Skipped automatically when no Redis is reachable, so a bare `pytest` still
 passes on a machine without one. Point TASKFLOW_TEST_REDIS_URL at an
-instance to run them (docker compose up redis, or any local Redis).
+instance to run them.
+
+That instance must not be shared with a running TaskFlow: these tests clear
+the keyspace, and live worker containers on the same consumer group would
+claim the tasks under test (and fail them, having no fixture tasks
+registered). Use a throwaway Redis, not the one `docker compose up` starts.
 """
 
 import asyncio
@@ -241,3 +246,51 @@ async def test_worker_pool_retries_through_redis(queue):
     assert finished.result == "ok"
     assert finished.retry_count == 1
     assert await queue.size() == 0
+
+
+async def test_worker_heartbeats_aggregate_across_processes(queue):
+    """/health on an api process has to report workers it does not run."""
+    assert await queue.aggregate_worker_stats() == {
+        "num_workers": 0,
+        "running": False,
+        "active_workers": 0,
+    }
+
+    await queue.record_worker_heartbeat(
+        "host-1", {"num_workers": 4, "running": True, "active_workers": 4}, 30
+    )
+    await queue.record_worker_heartbeat(
+        "host-2", {"num_workers": 4, "running": True, "active_workers": 2}, 30
+    )
+
+    stats = await queue.aggregate_worker_stats()
+    assert stats == {"num_workers": 8, "running": True, "active_workers": 6}
+
+
+async def test_worker_heartbeat_expires_so_dead_workers_drop_out(queue):
+    await queue.record_worker_heartbeat(
+        "dying", {"num_workers": 4, "running": True, "active_workers": 4}, 1
+    )
+    assert (await queue.aggregate_worker_stats())["num_workers"] == 4
+
+    await asyncio.sleep(1.5)  # let the TTL lapse
+
+    # No cleanup step ran - the key simply expired.
+    assert await queue.aggregate_worker_stats() == {
+        "num_workers": 0,
+        "running": False,
+        "active_workers": 0,
+    }
+
+
+async def test_worker_pool_publishes_its_own_heartbeat(queue):
+    pool = WorkerPool(queue=queue, num_workers=2, heartbeat_interval=0.1)
+    await pool.start()
+    try:
+        await asyncio.sleep(0.3)
+        stats = await queue.aggregate_worker_stats()
+    finally:
+        await pool.stop(wait=False)
+
+    assert stats["num_workers"] == 2
+    assert stats["running"] is True

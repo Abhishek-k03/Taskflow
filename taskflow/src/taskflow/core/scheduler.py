@@ -102,11 +102,19 @@ class TaskScheduler:
         repository: "PeriodicTaskRepository",
         now_fn: Callable[[], datetime] = now_utc,
         poll_interval: float = 1.0,
+        leader_lock: Optional["LeaderLock"] = None,
     ):
         self.queue = queue
         self.repository = repository
         self.now_fn = now_fn
         self.poll_interval = poll_interval
+        # Without a lock every scheduler process fires every job. Defaults to
+        # "always the leader", which is correct for a single process.
+        if leader_lock is None:
+            from ..leader import AlwaysLeader
+
+            leader_lock = AlwaysLeader()
+        self.leader_lock = leader_lock
         self.running = False
         self._scheduler_task = None
         logger.info("Task scheduler initialized")
@@ -133,6 +141,9 @@ class TaskScheduler:
             except asyncio.CancelledError:
                 pass
 
+        # Hand leadership over immediately instead of making the next
+        # scheduler wait out the TTL.
+        await self.leader_lock.release()
         logger.info("Task scheduler stopped")
 
     async def tick(self):
@@ -168,7 +179,12 @@ class TaskScheduler:
 
         while self.running:
             try:
-                await self.tick()
+                # Re-checked every pass rather than once at startup: leases
+                # expire, and a scheduler that lost the lock has to stop
+                # firing rather than carry on from a stale decision.
+                if await self.leader_lock.acquire_or_renew():
+                    await self.tick()
+
                 await asyncio.sleep(self.poll_interval)
 
             except Exception as e:

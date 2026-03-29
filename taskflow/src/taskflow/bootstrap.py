@@ -10,6 +10,7 @@ from .backends.base import QueueBackend
 from .backends.memory import MemoryQueueBackend
 from .core.registry import task_registry
 from .events import EventBus, LocalEventBus, RedisEventBus
+from .leader import AlwaysLeader, LeaderLock, RedisLeaderLock
 from .persistence.db import build_engine, build_sessionmaker
 from .persistence.periodic import (
     InMemoryPeriodicTaskRepository,
@@ -90,6 +91,19 @@ def build_periodic_repository(settings: Settings) -> PeriodicTaskRepository:
 
     logger.info("Periodic task definitions kept in memory (single process only)")
     return InMemoryPeriodicTaskRepository()
+
+
+def build_leader_lock(settings: Settings) -> LeaderLock:
+    """Guards the scheduler singleton.
+
+    Only meaningful with Redis: on the in-memory backend there is one
+    process by definition, so it is always the leader.
+    """
+    if settings.queue_backend is QueueBackendKind.REDIS:
+        logger.info("Scheduler leadership guarded by a Redis lock")
+        return RedisLeaderLock(settings.redis_url)
+
+    return AlwaysLeader()
 
 
 def build_event_bus(settings: Settings) -> EventBus:

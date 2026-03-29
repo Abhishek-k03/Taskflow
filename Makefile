@@ -21,7 +21,7 @@ test:
 migrate:
 	docker compose run --rm api alembic upgrade head
 
-# Workers are the scaling unit - api and scheduler stay at one replica
-# (the scheduler must, until the leader lock lands).
+# Workers are the scaling unit. Extra scheduler replicas are safe (the
+# leader lock keeps all but one idle) but pointless.
 scale:
 	docker compose up -d --scale worker=3

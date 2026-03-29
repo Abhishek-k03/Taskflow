@@ -66,8 +66,9 @@ services:
   scheduler:
     build:
       context: ./taskflow
-    # Must stay at one replica until the leader lock lands - two schedulers
-    # would each fire every cron job, duplicating work.
+    # Normally one replica. A Redis leader lock means extra replicas stand
+    # by rather than double-firing, which is what makes the overlap during a
+    # rolling deploy safe.
     environment:
       <<: *backend_env
       TASKFLOW_ROLE: scheduler

@@ -22,6 +22,7 @@ from .api import routes
 from .api.websocket import websocket_endpoint, deliver_event
 from .bootstrap import (
     build_event_bus,
+    build_leader_lock,
     build_periodic_repository,
     build_queue,
     import_task_modules,
@@ -68,7 +69,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         if settings.role in (Role.SCHEDULER, Role.ALL):
             app.state.scheduler = TaskScheduler(
-                queue=queue, repository=periodic_repository
+                queue=queue,
+                repository=periodic_repository,
+                leader_lock=build_leader_lock(settings),
             )
             await app.state.scheduler.start()
 

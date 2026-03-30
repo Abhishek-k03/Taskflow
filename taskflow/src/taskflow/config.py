@@ -84,6 +84,8 @@ class Settings(BaseSettings):
     reload: bool = False
 
     log_level: str = "INFO"
+    # JSON lines for log aggregators; plain text is friendlier locally.
+    json_logs: bool = False
 
     @field_validator("task_modules", "cors_origins", mode="before")
     @classmethod

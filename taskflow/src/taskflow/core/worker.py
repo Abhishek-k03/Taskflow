@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import time
 import socket
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -12,6 +13,12 @@ from typing import Awaitable, Callable, Optional
 from .task import Task
 from ..backends.base import QueueBackend
 from .registry import task_registry
+from ..observability import (
+    TASK_DURATION,
+    TASK_RETRIES,
+    TASKS_COMPLETED,
+    TASKS_FAILED,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -102,8 +109,10 @@ class WorkerPool:
 
     async def _execute_task(self, task: Task, worker_id: int):
         logger.info(
-            f"Worker {worker_id} executing task {task.task_id} ({task.func_name})"
+            f"Worker {worker_id} executing task {task.task_id} ({task.func_name})",
+            extra={"task_id": task.task_id, "worker_id": self.worker_id},
         )
+        started = time.monotonic()
 
         task.mark_running()
         await self.queue.update_task(task)
@@ -132,7 +141,11 @@ class WorkerPool:
             await self.queue.update_task(task)
             await self._emit_event("task_completed", task)
 
-            logger.info(f"Task {task.task_id} completed successfully")
+            TASKS_COMPLETED.labels(func_name=task.func_name).inc()
+            logger.info(
+                f"Task {task.task_id} completed successfully",
+                extra={"task_id": task.task_id, "worker_id": self.worker_id},
+            )
 
         except asyncio.TimeoutError:
             error_msg = f"Task exceeded timeout of {task.timeout}s"
@@ -155,6 +168,9 @@ class WorkerPool:
             await self._handle_task_failure(task, error_msg)
 
         finally:
+            TASK_DURATION.labels(func_name=task.func_name).observe(
+                time.monotonic() - started
+            )
             # Release this worker's claim on the delivery. By here the task
             # has either reached a terminal state or been re-enqueued as a
             # fresh delivery, so losing this process would no longer lose the
@@ -174,12 +190,18 @@ class WorkerPool:
             task.mark_failed(error_msg)
             await self.queue.update_task(task)
             await self._emit_event("task_failed", task)
+            TASKS_FAILED.labels(
+                func_name=task.func_name,
+                error_type=error_msg.split(":", 1)[0][:64],
+            ).inc()
             logger.error(
                 f"Task {task.task_id} failed permanently after "
-                f"{task.retry_count - 1} retries"
+                f"{task.retry_count - 1} retries",
+                extra={"task_id": task.task_id, "worker_id": self.worker_id},
             )
             return
 
+        TASK_RETRIES.labels(func_name=task.func_name).inc()
         task.mark_retrying()
         await self.queue.update_task(task)
         await self._emit_event("task_retrying", task)

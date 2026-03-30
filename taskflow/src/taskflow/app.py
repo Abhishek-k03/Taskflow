@@ -15,7 +15,7 @@ that wiring is ready when it does.
 from contextlib import asynccontextmanager
 import logging
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, Response, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api import routes
@@ -30,6 +30,7 @@ from .bootstrap import (
 from .config import Role, Settings
 from .core.scheduler import TaskScheduler
 from .core.worker import WorkerPool
+from .observability import render_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -140,5 +141,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "queue": queue_metrics,
             "workers": worker_stats,
         }
+
+    @app.get("/health/live")
+    async def liveness():
+        """Is this process up? Deliberately checks nothing external.
+
+        Kubernetes restarts a pod that fails this, so it must not depend on
+        Redis or Postgres - a brief dependency blip would otherwise restart
+        every pod at once and turn an outage into an outage plus a thundering
+        herd.
+        """
+        return {"status": "alive"}
+
+    @app.get("/health/ready")
+    async def readiness(response: Response):
+        """Can this process actually serve? Checks its dependencies.
+
+        Failing this only removes the pod from the load balancer, which is
+        the recoverable half of the pair.
+        """
+        try:
+            await app.state.queue.get_metrics()
+        except Exception as e:
+            response.status_code = 503
+            return {"status": "not ready", "detail": str(e)}
+        return {"status": "ready"}
+
+    @app.get("/metrics/prometheus")
+    async def prometheus_metrics():
+        """Not /metrics - that path already serves the JSON the dashboard
+        polls, and Prometheus text format there would break it."""
+        payload, content_type = await render_metrics(app.state.queue)
+        return Response(content=payload, media_type=content_type)
 
     return app

@@ -149,3 +149,59 @@ async def test_submitted_task_actually_executes(running_client):
             return
         await asyncio.sleep(0.02)
     raise AssertionError("task did not complete")
+
+
+@pytest.mark.asyncio
+async def test_liveness_checks_nothing_external(api_client):
+    """Must not depend on Redis/Postgres: k8s restarts pods that fail this,
+    so a dependency blip would restart everything at once."""
+    resp = await api_client.get("/health/live")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "alive"
+
+
+@pytest.mark.asyncio
+async def test_readiness_reports_ready_when_dependencies_answer(api_client):
+    resp = await api_client.get("/health/ready")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_readiness_returns_503_when_the_queue_is_unreachable(api_app, api_client):
+    class BrokenQueue:
+        async def get_metrics(self):
+            raise ConnectionError("redis is gone")
+
+    original = api_app.state.queue
+    api_app.state.queue = BrokenQueue()
+    try:
+        resp = await api_client.get("/health/ready")
+    finally:
+        api_app.state.queue = original
+
+    assert resp.status_code == 503
+    assert resp.json()["status"] == "not ready"
+
+
+@pytest.mark.asyncio
+async def test_prometheus_endpoint_is_separate_from_the_json_metrics(api_client):
+    """/metrics stays JSON for the dashboard; Prometheus gets its own path."""
+    json_metrics = await api_client.get("/api/v1/metrics")
+    assert json_metrics.status_code == 200
+    assert "queue" in json_metrics.json()
+
+    prom = await api_client.get("/metrics/prometheus")
+    assert prom.status_code == 200
+    assert "text/plain" in prom.headers["content-type"]
+    body = prom.text
+    assert "taskflow_queue_depth" in body
+    assert "taskflow_tasks_by_status" in body
+    assert "taskflow_workers_total" in body
+
+
+@pytest.mark.asyncio
+async def test_prometheus_counts_a_submitted_task(api_client):
+    await api_client.post("/api/v1/tasks", json={"func_name": "hello_world"})
+    body = (await api_client.get("/metrics/prometheus")).text
+    assert 'taskflow_tasks_submitted_total{func_name="hello_world"}' in body

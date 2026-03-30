@@ -17,13 +17,11 @@ import uvicorn
 from .app import create_app
 from .bootstrap import import_task_modules
 from .config import Settings
+from .observability import configure_logging
 
 
 def _serve(settings: Settings) -> None:
-    logging.basicConfig(
-        level=settings.log_level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
+    configure_logging(settings.log_level, settings.json_logs)
     app = create_app(settings)
     uvicorn.run(
         app,

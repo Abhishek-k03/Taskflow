@@ -7,6 +7,7 @@ from ..core.task import Task, TaskStatus, TaskPriority, now_utc
 from ..backends.base import QueueBackend
 from ..core.scheduler import PeriodicTask
 from ..core.registry import task_registry
+from ..observability import TASKS_SUBMITTED
 from ..persistence.periodic import PeriodicTaskRepository
 from .deps import get_queue, get_periodic_repository
 
@@ -82,6 +83,8 @@ async def create_task(task_data: TaskCreate, queue: QueueBackend = Depends(get_q
     success = await queue.enqueue(task)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to enqueue task")
+
+    TASKS_SUBMITTED.labels(func_name=task.func_name).inc()
 
     return TaskResponse(**task.to_dict())
 

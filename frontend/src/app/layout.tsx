@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { WebSocketProvider } from "@/contexts/WebSocketContext";
+import { ToastProvider } from "@/components/Toast";
 import Header from "@/components/Header";
 
 const geistSans = Geist({
@@ -29,10 +30,12 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-gray-950 text-white min-h-screen`}
       >
-        <WebSocketProvider>
-          <Header />
-          <main className="container mx-auto px-4 py-6">{children}</main>
-        </WebSocketProvider>
+        <ToastProvider>
+          <WebSocketProvider>
+            <Header />
+            <main className="container mx-auto px-4 py-6">{children}</main>
+          </WebSocketProvider>
+        </ToastProvider>
       </body>
     </html>
   );

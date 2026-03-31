@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Task, TaskStatus } from "@/types";
 import { taskApi } from "@/lib/api";
+import { useApiResource } from "@/hooks/useApiResource";
 import TaskCard from "./TaskCard";
 import TaskDetails from "./TaskDetails";
 import { useWebSocket } from "@/contexts/WebSocketContext";
@@ -10,54 +11,54 @@ import { useWebSocket } from "@/contexts/WebSocketContext";
 type FilterStatus = "all" | TaskStatus;
 
 export default function TaskList() {
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterStatus>("all");
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [liveTasks, setLiveTasks] = useState<Task[] | null>(null);
   const { lastMessage } = useWebSocket();
 
-  const fetchTasks = useCallback(async () => {
-    try {
-      setError(null);
-      const data = await taskApi.list(
-        filter === "all" ? undefined : filter,
-        100,
-      );
-      setTasks(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to fetch tasks");
-    } finally {
-      setLoading(false);
-    }
-  }, [filter]);
+  const {
+    data: fetched,
+    error,
+    loading,
+    refetch: fetchTasks,
+  } = useApiResource(
+    useCallback(
+      (signal: AbortSignal) =>
+        taskApi.list(filter === "all" ? undefined : filter, 100, signal),
+      [filter],
+    ),
+    [filter],
+  );
 
+  // Fetch results replace the live list wholesale, so a refresh is always
+  // authoritative over accumulated WebSocket edits.
   useEffect(() => {
-    fetchTasks();
-  }, [fetchTasks]);
+    setLiveTasks(fetched);
+  }, [fetched]);
 
-  // Update tasks when WebSocket message received
+  // Apply one WebSocket message. Depending only on `lastMessage` matters:
+  // this effect used to also depend on selectedTask?.task_id, so opening a
+  // modal re-ran it against a stale message and could resurrect a task that
+  // a refresh had just removed.
   useEffect(() => {
-    if (lastMessage?.task) {
-      setTasks((prev) => {
-        const index = prev.findIndex(
-          (t) => t.task_id === lastMessage.task!.task_id,
-        );
-        if (index >= 0) {
-          const newTasks = [...prev];
-          newTasks[index] = lastMessage.task!;
-          return newTasks;
-        }
-        // New task - add to beginning
-        return [lastMessage.task!, ...prev];
-      });
+    const incoming = lastMessage?.task;
+    if (!incoming) return;
 
-      // Update selected task if it's the one that changed
-      if (selectedTask?.task_id === lastMessage.task.task_id) {
-        setSelectedTask(lastMessage.task);
+    setLiveTasks((prev) => {
+      if (!prev) return prev;
+      const index = prev.findIndex((t) => t.task_id === incoming.task_id);
+      if (index >= 0) {
+        const next = [...prev];
+        next[index] = incoming;
+        return next;
       }
-    }
-  }, [lastMessage, selectedTask?.task_id]);
+      return [incoming, ...prev];
+    });
+
+    setSelectedTask((prev) =>
+      prev && prev.task_id === incoming.task_id ? incoming : prev,
+    );
+  }, [lastMessage]);
 
   const filterOptions: { value: FilterStatus; label: string }[] = [
     { value: "all", label: "All" },
@@ -69,6 +70,10 @@ export default function TaskList() {
     { value: TaskStatus.RETRYING, label: "Retrying" },
   ];
 
+  // The server already applied the status filter, but a task can change
+  // status over the WebSocket after it arrives - so a live task that no
+  // longer matches has to drop out of the view.
+  const tasks = liveTasks ?? [];
   const filteredTasks =
     filter === "all" ? tasks : tasks.filter((t) => t.status === filter);
 

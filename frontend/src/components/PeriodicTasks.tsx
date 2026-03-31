@@ -1,59 +1,102 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { PeriodicTask, TaskPriority, priorityLabels } from "@/types";
 import { periodicTaskApi, systemApi } from "@/lib/api";
+import { useApiResource } from "@/hooks/useApiResource";
+import { useToast } from "./Toast";
 import { formatDateTime, parseCronExpression } from "@/lib/utils";
 
 export default function PeriodicTasks() {
-  const [tasks, setTasks] = useState<Record<string, PeriodicTask>>({});
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const { notify } = useToast();
 
-  const fetchTasks = async () => {
-    try {
-      const data = await periodicTaskApi.list();
-      setTasks(data);
-      setError(null);
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Failed to fetch periodic tasks",
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
+  const {
+    data: tasks,
+    error,
+    loading,
+    refetch: fetchTasks,
+  } = useApiResource(
+    useCallback((signal: AbortSignal) => periodicTaskApi.list(signal), []),
+    [],
+    // Cron definitions change only when someone edits them, so this polls
+    // slowly rather than not at all - there is no event stream for them the
+    // way there is for tasks.
+    {},
+  );
 
   useEffect(() => {
-    fetchTasks();
-    const interval = setInterval(fetchTasks, 10000);
+    const interval = setInterval(fetchTasks, 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [fetchTasks]);
 
   const handleTrigger = async (name: string) => {
     try {
       await periodicTaskApi.trigger(name);
+      notify(`Triggered "${name}"`);
       fetchTasks();
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to trigger task");
+      notify(
+        err instanceof Error ? err.message : "Failed to trigger task",
+        "error",
+      );
     }
   };
 
   const handleDelete = async (name: string) => {
-    if (!confirm(`Delete periodic task "${name}"?`)) return;
     try {
       await periodicTaskApi.delete(name);
+      notify(`Deleted "${name}"`);
       fetchTasks();
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to delete task");
+      notify(
+        err instanceof Error ? err.message : "Failed to delete task",
+        "error",
+      );
+    } finally {
+      setPendingDelete(null);
     }
   };
 
-  const taskEntries = Object.entries(tasks);
+  const confirmDialog = pendingDelete && (
+    <div
+      className="modal-backdrop fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50"
+      onClick={() => setPendingDelete(null)}
+    >
+      <div
+        className="modal-content bg-gray-900 rounded-2xl max-w-sm w-full border border-gray-700/50 shadow-2xl p-6"
+        onClick={(e) => e.stopPropagation()}
+        role="alertdialog"
+        aria-modal="true"
+      >
+        <h3 className="text-lg font-bold mb-2">Delete periodic task?</h3>
+        <p className="text-sm text-gray-400 mb-6 break-all">
+          &quot;{pendingDelete}&quot; will stop running.
+        </p>
+        <div className="flex justify-end gap-3">
+          <button
+            onClick={() => setPendingDelete(null)}
+            className="btn-animated px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-xl text-sm font-medium border border-gray-700"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => handleDelete(pendingDelete)}
+            className="btn-animated px-4 py-2 bg-red-600 hover:bg-red-500 rounded-xl text-sm font-medium"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  const taskEntries = Object.entries(tasks ?? {});
 
   return (
     <div className="space-y-6 animate-fade-in">
+      {confirmDialog}
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -270,7 +313,7 @@ export default function PeriodicTasks() {
                     Run Now
                   </button>
                   <button
-                    onClick={() => handleDelete(name)}
+                    onClick={() => setPendingDelete(name)}
                     className="btn-animated px-4 py-2 bg-red-600/80 hover:bg-red-500 rounded-lg text-sm font-medium flex items-center gap-1.5"
                   >
                     <svg
@@ -347,10 +390,21 @@ function CreatePeriodicTaskForm({ onSuccess }: { onSuccess: () => void }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    systemApi.registeredTasks().then(({ tasks }) => {
-      setRegisteredTasks(tasks);
-      if (tasks.length > 0) setFuncName(tasks[0]);
-    });
+    // Previously had no .catch(): with the backend down this rejected
+    // unhandled and the dropdown just rendered empty with no explanation.
+    systemApi
+      .registeredTasks()
+      .then(({ tasks }) => {
+        setRegisteredTasks(tasks);
+        if (tasks.length > 0) setFuncName(tasks[0]);
+      })
+      .catch((err) =>
+        setError(
+          err instanceof Error
+            ? `Could not load task functions: ${err.message}`
+            : "Could not load task functions",
+        ),
+      );
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {

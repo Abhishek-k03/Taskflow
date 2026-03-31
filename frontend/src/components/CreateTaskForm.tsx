@@ -41,7 +41,9 @@ export default function CreateTaskForm({ onSuccess }: CreateTaskFormProps) {
   const [kwargs, setKwargs] = useState("");
   const [priority, setPriority] = useState(TaskPriority.NORMAL);
   const [maxRetries, setMaxRetries] = useState(3);
-  const [timeout, setTimeout] = useState<string>("");
+  // Named so it does not shadow the global setTimeout, which this file
+  // could otherwise never call.
+  const [timeoutValue, setTimeoutValue] = useState<string>("");
   const [registeredTasks, setRegisteredTasks] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -120,7 +122,7 @@ export default function CreateTaskForm({ onSuccess }: CreateTaskFormProps) {
         kwargs: parsedKwargs,
         priority,
         max_retries: maxRetries,
-        timeout: timeout ? parseInt(timeout) : undefined,
+        timeout: timeoutValue ? parseInt(timeoutValue) : undefined,
       });
 
       setSuccess(`Task created: ${result.task_id}`);
@@ -380,8 +382,8 @@ export default function CreateTaskForm({ onSuccess }: CreateTaskFormProps) {
               </label>
               <input
                 type="number"
-                value={timeout}
-                onChange={(e) => setTimeout(e.target.value)}
+                value={timeoutValue}
+                onChange={(e) => setTimeoutValue(e.target.value)}
                 placeholder="No limit"
                 min={1}
                 className="input-animated w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"

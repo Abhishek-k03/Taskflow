@@ -1,33 +1,29 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect } from "react";
 import { systemApi } from "@/lib/api";
-import { HealthResponse } from "@/types";
+import { useApiResource } from "@/hooks/useApiResource";
 import { useWebSocket } from "@/contexts/WebSocketContext";
 
 export default function Dashboard() {
-  const [health, setHealth] = useState<HealthResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const { isConnected } = useWebSocket();
+  const { isConnected, lastMessage } = useWebSocket();
 
-  const fetchHealth = async () => {
-    try {
-      const data = await systemApi.health();
-      setHealth(data);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to fetch health");
-    } finally {
-      setLoading(false);
-    }
-  };
+  const {
+    data: health,
+    error,
+    loading,
+    refetch: fetchHealth,
+  } = useApiResource(
+    useCallback((signal: AbortSignal) => systemApi.health(signal), []),
+  );
 
+  // Refresh on task events instead of polling on a timer. The dashboard used
+  // to poll every 5s while also holding an open WebSocket it only consulted
+  // to render a "Live" pill - the events were already arriving, the numbers
+  // just ignored them.
   useEffect(() => {
-    fetchHealth();
-    const interval = setInterval(fetchHealth, 5000);
-    return () => clearInterval(interval);
-  }, []);
+    if (lastMessage) fetchHealth();
+  }, [lastMessage, fetchHealth]);
 
   if (loading) {
     return (
@@ -46,7 +42,7 @@ export default function Dashboard() {
     );
   }
 
-  if (error) {
+  if (error && !health) {
     return (
       <div className="alert-animated bg-red-900/50 border border-red-500 text-red-200 p-5 rounded-xl">
         <div className="flex items-start gap-3">

@@ -19,6 +19,7 @@ from fastapi import FastAPI, Response, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api import routes
+from .api.auth import websocket_key_is_valid
 from .api.websocket import websocket_endpoint, deliver_event
 from .bootstrap import (
     build_event_bus,
@@ -49,6 +50,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Every role gets the repository, including api-without-scheduler:
         # the periodic-task endpoints operate on it directly.
         periodic_repository = build_periodic_repository(settings)
+        app.state.api_keys = settings.api_keys
+        if settings.api_keys:
+            logger.info(f"API key auth enabled ({len(settings.api_keys)} key(s))")
         app.state.queue = queue
         app.state.event_bus = event_bus
         app.state.periodic_repository = periodic_repository
@@ -96,6 +100,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
 
+    app.state.api_keys = settings.api_keys
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -109,6 +115,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         @app.websocket("/ws")
         async def websocket_route(websocket: WebSocket):
+            # Rejected before accept(), so an unauthenticated client never
+            # gets a usable socket.
+            if not await websocket_key_is_valid(websocket):
+                await websocket.close(code=1008, reason="Invalid or missing token")
+                return
             await websocket_endpoint(websocket)
 
         @app.get("/")

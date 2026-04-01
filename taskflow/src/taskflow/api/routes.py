@@ -9,6 +9,7 @@ from ..core.scheduler import PeriodicTask
 from ..core.registry import task_registry
 from ..observability import TASKS_SUBMITTED
 from ..persistence.periodic import PeriodicTaskRepository
+from .auth import require_api_key
 from .deps import get_queue, get_periodic_repository
 
 router = APIRouter()
@@ -56,7 +57,12 @@ class PeriodicTaskCreate(BaseModel):
 
 
 # Task endpoints
-@router.post("/tasks", response_model=TaskResponse, status_code=201)
+@router.post(
+    "/tasks",
+    response_model=TaskResponse,
+    status_code=201,
+    dependencies=[Depends(require_api_key)],
+)
 async def create_task(task_data: TaskCreate, queue: QueueBackend = Depends(get_queue)):
     """Submit a new task for execution"""
     # Verify function exists in registry
@@ -145,7 +151,11 @@ def _serialize(task: PeriodicTask) -> dict:
     }
 
 
-@router.post("/periodic-tasks", status_code=201)
+@router.post(
+    "/periodic-tasks",
+    status_code=201,
+    dependencies=[Depends(require_api_key)],
+)
 async def create_periodic_task(
     periodic_task: PeriodicTaskCreate,
     repository: PeriodicTaskRepository = Depends(get_periodic_repository),
@@ -198,7 +208,9 @@ async def get_periodic_task(
     return _serialize(task)
 
 
-@router.post("/periodic-tasks/{name}/trigger")
+@router.post(
+    "/periodic-tasks/{name}/trigger", dependencies=[Depends(require_api_key)]
+)
 async def trigger_periodic_task(
     name: str,
     repository: PeriodicTaskRepository = Depends(get_periodic_repository),
@@ -218,7 +230,9 @@ async def trigger_periodic_task(
     return {"message": f"Triggered periodic task \"{name}\"", "task_id": task.task_id}
 
 
-@router.delete("/periodic-tasks/{name}")
+@router.delete(
+    "/periodic-tasks/{name}", dependencies=[Depends(require_api_key)]
+)
 async def delete_periodic_task(
     name: str,
     repository: PeriodicTaskRepository = Depends(get_periodic_repository),
@@ -248,7 +262,9 @@ async def get_metrics(queue: QueueBackend = Depends(get_queue)):
     }
 
 
-@router.post("/system/clear-queue")
+@router.post(
+    "/system/clear-queue", dependencies=[Depends(require_api_key)]
+)
 async def clear_queue(queue: QueueBackend = Depends(get_queue)):
     """Clear all tasks from queue (use with caution!)"""
     await queue.clear()

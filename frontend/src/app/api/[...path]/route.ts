@@ -4,6 +4,10 @@
 // per environment.
 
 const BACKEND_URL = process.env.TASKFLOW_BACKEND_URL || "http://localhost:8000";
+// Server-side only. The browser never sees this - it talks to this origin,
+// and the key is attached here. That is what let auth be switched on without
+// every existing client breaking.
+const API_KEY = process.env.TASKFLOW_API_KEY;
 
 async function proxy(
   request: Request,
@@ -13,9 +17,14 @@ async function proxy(
   const search = new URL(request.url).search;
   const target = `${BACKEND_URL}/api/${path.join("/")}${search}`;
 
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (API_KEY) headers["X-API-Key"] = API_KEY;
+
   const init: RequestInit = {
     method: request.method,
-    headers: { "Content-Type": "application/json" },
+    headers,
     cache: "no-store",
   };
   if (request.method !== "GET" && request.method !== "HEAD") {

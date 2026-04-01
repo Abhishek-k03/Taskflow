@@ -38,6 +38,9 @@ services:
         TASKFLOW_REDIS_URL: redis://redis:6379
         TASKFLOW_DATABASE_URL: postgresql+asyncpg://taskflow:taskflow@postgres:5432/taskflow
         TASKFLOW_CORS_ORIGINS: http://localhost:3000
+        # Demo value. In a real deployment this comes from a secret store,
+        # never from a file in the repo.
+        TASKFLOW_API_KEYS: ${TASKFLOW_API_KEYS:-local-dev-key}
       TASKFLOW_ROLE: api
     depends_on: &backend_deps
       postgres:
@@ -80,10 +83,14 @@ services:
       context: ./frontend
       args:
         TASKFLOW_BACKEND_URL: http://api:8000
+        TASKFLOW_API_KEY: ${TASKFLOW_API_KEYS:-local-dev-key}
     ports:
       - "3000:3000"
     environment:
       TASKFLOW_BACKEND_URL: http://api:8000
+      # The browser never receives this - the Next server attaches it when
+      # proxying to the api, so enabling auth needs no client change.
+      TASKFLOW_API_KEY: ${TASKFLOW_API_KEYS:-local-dev-key}
     depends_on:
       api:
         condition: service_healthy

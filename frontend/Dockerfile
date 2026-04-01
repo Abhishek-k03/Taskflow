@@ -17,6 +17,10 @@ COPY . .
 # with no --build-arg still produces a working image for the common case.
 ARG TASKFLOW_BACKEND_URL=http://localhost:8000
 ENV TASKFLOW_BACKEND_URL=$TASKFLOW_BACKEND_URL
+# Needed at build time only because the /ws rewrite is baked in; /api gets
+# its key at request time from the runtime env instead.
+ARG TASKFLOW_API_KEY=
+ENV TASKFLOW_API_KEY=$TASKFLOW_API_KEY
 RUN npm run build
 
 # ---- runtime ----

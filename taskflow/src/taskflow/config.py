@@ -78,6 +78,10 @@ class Settings(BaseSettings):
     # so this has to be an explicit list.
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
 
+    # Empty means authentication is off. Set it to require an X-API-Key
+    # header on every mutating route (and a ?token= on the WebSocket).
+    api_keys: Annotated[list[str], NoDecode] = []
+
     # Server
     host: str = "0.0.0.0"
     port: int = 8000
@@ -87,7 +91,7 @@ class Settings(BaseSettings):
     # JSON lines for log aggregators; plain text is friendlier locally.
     json_logs: bool = False
 
-    @field_validator("task_modules", "cors_origins", mode="before")
+    @field_validator("task_modules", "cors_origins", "api_keys", mode="before")
     @classmethod
     def _split_comma_separated(cls, value):
         """Accept `a,b` as well as JSON `["a","b"]`, since comma-separated is

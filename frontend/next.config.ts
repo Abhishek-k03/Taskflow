@@ -10,6 +10,13 @@ import type { NextConfig } from "next";
 // target fixed at build time: unlike the other two routes, pointing this
 // image at a different backend for /ws does require a rebuild.
 const BACKEND_URL = process.env.TASKFLOW_BACKEND_URL || "http://localhost:8000";
+// Browsers cannot set headers on a WebSocket, so the backend authenticates
+// the socket with ?token=. Appended here, server-side, rather than shipped
+// to the browser.
+const API_KEY = process.env.TASKFLOW_API_KEY;
+const WS_DESTINATION = API_KEY
+  ? `${BACKEND_URL}/ws?token=${encodeURIComponent(API_KEY)}`
+  : `${BACKEND_URL}/ws`;
 
 const nextConfig: NextConfig = {
   /* config options here */
@@ -20,7 +27,7 @@ const nextConfig: NextConfig = {
       // A WS handshake is an HTTP GET with an Upgrade header, so the
       // destination scheme stays http(s) - Next's rewrite validator
       // rejects ws:// destinations outright, and doesn't need it anyway.
-      { source: "/ws", destination: `${BACKEND_URL}/ws` },
+      { source: "/ws", destination: WS_DESTINATION },
     ];
   },
 };

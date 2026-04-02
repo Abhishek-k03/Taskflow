@@ -1,0 +1,42 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+# Single replicas and no autoscaling: a local cluster has one node, so extra
+# replicas only compete for the same CPU.
+replicas:
+  - name: api
+    count: 1
+  - name: worker
+    count: 1
+  - name: frontend
+    count: 1
+
+patches:
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: worker
+    patch: |-
+      $patch: delete
+      apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
+      metadata:
+        name: worker
+  - target:
+      kind: PodDisruptionBudget
+      name: api
+    patch: |-
+      $patch: delete
+      apiVersion: policy/v1
+      kind: PodDisruptionBudget
+      metadata:
+        name: api
+  # Locally built images are not in a registry.
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Never

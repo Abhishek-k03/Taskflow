@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      # Long enough for an in-flight task to finish on its own. WorkerPool
+      # already stops claiming new work on SIGTERM; anything still unacked
+      # when the pod does go is reclaimed via XAUTOCLAIM rather than lost.
+      terminationGracePeriodSeconds: 120
+      containers:
+        - name: worker
+          image: taskflow-backend:latest
+          ports:
+            - containerPort: 8000
+          env:
+            - name: TASKFLOW_ROLE
+              value: worker
+          envFrom:
+            - configMapRef:
+                name: taskflow-config
+            - secretRef:
+                name: taskflow-secrets
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              memory: 768Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: worker
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: worker
+  minReplicas: 2
+  maxReplicas: 10
+  # CPU is the signal that works on a stock cluster. Scaling on queue depth
+  # is the better signal and the exposition already publishes it
+  # (taskflow_queue_depth), but consuming it needs the Prometheus Adapter
+  # installed to serve external.metrics.k8s.io - see the commented block.
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    # - type: External
+    #   external:
+    #     metric:
+    #       name: taskflow_queue_depth
+    #     target:
+    #       type: AverageValue
+    #       averageValue: "10"

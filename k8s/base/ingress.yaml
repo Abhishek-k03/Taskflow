@@ -1,0 +1,29 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: taskflow
+  annotations:
+    # WebSocket upgrades are long-lived; the default 60s read timeout would
+    # cut /ws connections repeatedly.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - taskflow.local
+      secretName: taskflow-tls
+  rules:
+    - host: taskflow.local
+      http:
+        paths:
+          # /api and /ws go to the frontend too, not straight to the api:
+          # the Next server is what attaches the API key and holds the
+          # same-origin contract the browser relies on.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 3000

@@ -1,3 +1,11 @@
+# Datastore host ports are overridable because a machine with Postgres or
+# Redis already installed will silently win the binding: Windows lets both
+# the native service and Docker's proxy listen on the same port, and
+# connections to localhost then reach whichever got there first - so
+# `psql localhost:5432` talks to the wrong database with no error to
+# explain it. Set POSTGRES_PORT/REDIS_PORT to something free. Nothing
+# inside the stack is affected; services reach each other over the compose
+# network, on the container ports, which never change.
 services:
   postgres:
     image: postgres:17-alpine
@@ -6,7 +14,7 @@ services:
       POSTGRES_PASSWORD: taskflow
       POSTGRES_DB: taskflow
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -18,7 +26,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:

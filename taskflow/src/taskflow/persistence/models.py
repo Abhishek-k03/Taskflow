@@ -56,6 +56,11 @@ class TaskRecord(Base):
     __table_args__ = (
         # Backs the list endpoint's status filter + created_at ordering.
         Index("ix_tasks_status_created_at", "status", "created_at"),
+        # And the unfiltered case, which the dashboard hits on every load.
+        # Without this, "newest 100 of everything" sorts the whole table -
+        # fine at 50 rows, not at 50,000, which is the size Postgres exists
+        # to hold in the first place.
+        Index("ix_tasks_created_at", "created_at"),
     )
 
 

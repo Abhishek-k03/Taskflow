@@ -7,14 +7,23 @@ Using app.state instead of module-level globals means each app instance
 between tests and no risk of one process's globals bleeding into another.
 """
 
+from typing import Optional
+
 from fastapi import Request
 
 from ..backends.base import QueueBackend
 from ..persistence.periodic import PeriodicTaskRepository
+from ..persistence.store import TaskStore
 
 
 def get_queue(request: Request) -> QueueBackend:
     return request.app.state.queue
+
+
+def get_task_store(request: Request) -> Optional[TaskStore]:
+    """None when no Postgres is configured, which every caller must handle -
+    local dev and the test suite run without one."""
+    return request.app.state.task_store
 
 
 def get_periodic_repository(request: Request) -> PeriodicTaskRepository:

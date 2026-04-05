@@ -26,6 +26,7 @@ from .bootstrap import (
     build_leader_lock,
     build_periodic_repository,
     build_queue,
+    build_task_store,
     import_task_modules,
 )
 from .config import Role, Settings
@@ -45,7 +46,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         import_task_modules(settings.task_modules)
 
-        queue = build_queue(settings)
+        task_store = build_task_store(settings)
+        queue = build_queue(settings, store=task_store)
         event_bus = build_event_bus(settings)
         # Every role gets the repository, including api-without-scheduler:
         # the periodic-task endpoints operate on it directly.
@@ -54,6 +56,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if settings.api_keys:
             logger.info(f"API key auth enabled ({len(settings.api_keys)} key(s))")
         app.state.queue = queue
+        app.state.task_store = task_store
         app.state.event_bus = event_bus
         app.state.periodic_repository = periodic_repository
         app.state.worker_pool = None
@@ -101,6 +104,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
 
     app.state.api_keys = settings.api_keys
+    # Set before lifespan too, so get_task_store() has an attribute to read
+    # even in a test that builds the app without running lifespan.
+    app.state.task_store = None
 
     app.add_middleware(
         CORSMiddleware,

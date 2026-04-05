@@ -9,8 +9,9 @@ from ..core.scheduler import PeriodicTask
 from ..core.registry import task_registry
 from ..observability import TASKS_SUBMITTED
 from ..persistence.periodic import PeriodicTaskRepository
+from ..persistence.store import TaskStore
 from .auth import require_api_key
-from .deps import get_queue, get_periodic_repository
+from .deps import get_queue, get_periodic_repository, get_task_store
 
 router = APIRouter()
 
@@ -96,9 +97,22 @@ async def create_task(task_data: TaskCreate, queue: QueueBackend = Depends(get_q
 
 
 @router.get("/tasks/{task_id}", response_model=TaskResponse)
-async def get_task(task_id: str, queue: QueueBackend = Depends(get_queue)):
-    """Get task status and details"""
+async def get_task(
+    task_id: str,
+    queue: QueueBackend = Depends(get_queue),
+    store: Optional[TaskStore] = Depends(get_task_store),
+):
+    """Get task status and details.
+
+    Queue first, Postgres second. The queue is the hot path and therefore
+    the freshest view of a task that is still moving; Postgres is the
+    durable one, and catches anything the queue no longer holds. Trying it
+    in the other order would serve a status that is milliseconds stale for
+    the tasks users watch most closely.
+    """
     task = await queue.get_task(task_id)
+    if task is None and store is not None:
+        task = await store.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
@@ -110,10 +124,25 @@ async def list_tasks(
     status: Optional[TaskStatus] = None,
     limit: int = 100,
     queue: QueueBackend = Depends(get_queue),
+    store: Optional[TaskStore] = Depends(get_task_store),
 ):
-    """List all tasks, optionally filtered by status"""
-    tasks = await queue.get_all_tasks(status)
-    tasks = sorted(tasks, key=lambda t: t.created_at, reverse=True)[:limit]
+    """List all tasks, optionally filtered by status.
+
+    Postgres first here, unlike the single-task lookup: this is the query
+    that wants the complete record rather than the freshest one, and it is
+    the only path that can sort and limit in the database instead of pulling
+    every task into the process to sort in Python.
+
+    Dual-write is best-effort, so a task whose write failed is missing here
+    while still existing in the queue. That is the accepted trade: merging
+    both sources would mean de-duplicating two differently-ordered lists on
+    every request to paper over an outage that is already logged.
+    """
+    if store is not None:
+        tasks = await store.list_tasks(status, limit)
+    else:
+        tasks = await queue.get_all_tasks(status)
+        tasks = sorted(tasks, key=lambda t: t.created_at, reverse=True)[:limit]
     return [TaskResponse(**t.to_dict()) for t in tasks]
 
 

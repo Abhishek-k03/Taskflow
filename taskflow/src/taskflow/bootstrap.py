@@ -52,18 +52,23 @@ def import_task_modules(modules: list[str]) -> list[str]:
     return registered
 
 
-def build_queue(settings: Settings) -> QueueBackend:
-    """Construct the task queue from settings.
+def build_task_store(settings: Settings) -> TaskStore | None:
+    """The durable store, or None when no Postgres is configured.
 
-    Wires in Postgres dual-write only when TASKFLOW_DATABASE_URL is set -
-    local dev and the test suite run with no Postgres at all otherwise.
+    Built here rather than inside build_queue() because it has two consumers
+    now: the queue writes through it, and the read routes query it. Local dev
+    and the unit suite run with no Postgres at all, hence the None.
     """
-    store = None
-    if settings.database_url:
-        engine = build_engine(settings.database_url)
-        store = TaskStore(build_sessionmaker(engine))
-        logger.info("Postgres dual-write enabled")
+    if not settings.database_url:
+        return None
 
+    engine = build_engine(settings.database_url)
+    logger.info("Postgres enabled: dual-write plus durable reads")
+    return TaskStore(build_sessionmaker(engine))
+
+
+def build_queue(settings: Settings, store: TaskStore | None = None) -> QueueBackend:
+    """Construct the task queue from settings."""
     if settings.queue_backend is QueueBackendKind.REDIS:
         # Imported lazily so a memory-backend deployment never needs the
         # redis client importable.

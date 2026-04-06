@@ -169,3 +169,25 @@ async def test_list_stays_a_bare_array(pg_client, pg_app):
     body = (await pg_client.get("/api/v1/tasks")).json()
 
     assert isinstance(body, list)
+
+
+async def test_status_routes_share_the_postgres_read_path(pg_client, pg_app):
+    """These three predate ?status= and used to read the queue directly, so
+    after a Redis flush they reported an empty history while /tasks - same
+    data, same request - reported all of it."""
+    done = make_task()
+    done.mark_completed(None)
+    await pg_app.state.task_store.persist(done)
+
+    failed = make_task()
+    failed.mark_failed("boom")
+    await pg_app.state.task_store.persist(failed)
+
+    assert await pg_app.state.queue.get_all_tasks() == []
+
+    completed = await pg_client.get("/api/v1/tasks/status/completed")
+    assert [t["task_id"] for t in completed.json()] == [done.task_id]
+
+    failures = await pg_client.get("/api/v1/tasks/status/failed")
+    assert [t["task_id"] for t in failures.json()] == [failed.task_id]
+    assert failures.json()[0]["error"] == "boom"

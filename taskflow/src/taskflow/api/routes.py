@@ -119,6 +119,36 @@ async def get_task(
     return TaskResponse(**task.to_dict())
 
 
+async def _read_tasks(
+    status: Optional[TaskStatus],
+    limit: int,
+    queue: QueueBackend,
+    store: Optional[TaskStore],
+) -> List[Task]:
+    """The one read path behind every list endpoint.
+
+    Postgres first, unlike the single-task lookup: these queries want the
+    complete record rather than the freshest one, and this is the only path
+    that can sort and limit in the database instead of pulling every task
+    into the process to sort in Python.
+
+    Dual-write is best-effort, so a task whose write failed is missing here
+    while still existing in the queue. That is the accepted trade: merging
+    both sources would mean de-duplicating two differently-ordered lists on
+    every request to paper over an outage that is already logged.
+
+    Shared rather than repeated because the alternative was observable: with
+    only /tasks reading Postgres, the status-specific routes below kept
+    answering from the queue and reported an empty history the moment Redis
+    was flushed, while /tasks - same data, same request - reported all of it.
+    """
+    if store is not None:
+        return await store.list_tasks(status, limit)
+
+    tasks = await queue.get_all_tasks(status)
+    return sorted(tasks, key=lambda t: t.created_at, reverse=True)[:limit]
+
+
 @router.get("/tasks", response_model=List[TaskResponse])
 async def list_tasks(
     status: Optional[TaskStatus] = None,
@@ -126,44 +156,44 @@ async def list_tasks(
     queue: QueueBackend = Depends(get_queue),
     store: Optional[TaskStore] = Depends(get_task_store),
 ):
-    """List all tasks, optionally filtered by status.
-
-    Postgres first here, unlike the single-task lookup: this is the query
-    that wants the complete record rather than the freshest one, and it is
-    the only path that can sort and limit in the database instead of pulling
-    every task into the process to sort in Python.
-
-    Dual-write is best-effort, so a task whose write failed is missing here
-    while still existing in the queue. That is the accepted trade: merging
-    both sources would mean de-duplicating two differently-ordered lists on
-    every request to paper over an outage that is already logged.
-    """
-    if store is not None:
-        tasks = await store.list_tasks(status, limit)
-    else:
-        tasks = await queue.get_all_tasks(status)
-        tasks = sorted(tasks, key=lambda t: t.created_at, reverse=True)[:limit]
+    """List all tasks, optionally filtered by status"""
+    tasks = await _read_tasks(status, limit, queue, store)
     return [TaskResponse(**t.to_dict()) for t in tasks]
 
 
+# The three routes below predate ?status= and are exactly equivalent to it.
+# Kept as-is because they are public API, but they share its read path now
+# rather than reaching into the queue on their own.
 @router.get("/tasks/status/pending", response_model=List[TaskResponse])
-async def get_pending_tasks(queue: QueueBackend = Depends(get_queue)):
+async def get_pending_tasks(
+    limit: int = 100,
+    queue: QueueBackend = Depends(get_queue),
+    store: Optional[TaskStore] = Depends(get_task_store),
+):
     """Get all pending/queued tasks"""
-    tasks = await queue.get_pending_tasks()
+    tasks = await _read_tasks(TaskStatus.QUEUED, limit, queue, store)
     return [TaskResponse(**t.to_dict()) for t in tasks]
 
 
 @router.get("/tasks/status/completed", response_model=List[TaskResponse])
-async def get_completed_tasks(queue: QueueBackend = Depends(get_queue)):
+async def get_completed_tasks(
+    limit: int = 100,
+    queue: QueueBackend = Depends(get_queue),
+    store: Optional[TaskStore] = Depends(get_task_store),
+):
     """Get all completed tasks"""
-    tasks = await queue.get_completed_tasks()
+    tasks = await _read_tasks(TaskStatus.COMPLETED, limit, queue, store)
     return [TaskResponse(**t.to_dict()) for t in tasks]
 
 
 @router.get("/tasks/status/failed", response_model=List[TaskResponse])
-async def get_failed_tasks(queue: QueueBackend = Depends(get_queue)):
+async def get_failed_tasks(
+    limit: int = 100,
+    queue: QueueBackend = Depends(get_queue),
+    store: Optional[TaskStore] = Depends(get_task_store),
+):
     """Get all failed tasks"""
-    tasks = await queue.get_failed_tasks()
+    tasks = await _read_tasks(TaskStatus.FAILED, limit, queue, store)
     return [TaskResponse(**t.to_dict()) for t in tasks]
 
 

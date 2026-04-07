@@ -34,6 +34,9 @@ TASKS_FAILED = Counter(
     "Tasks that exhausted their retries",
     ["func_name", "error_type"],
 )
+TASKS_CANCELLED = Counter(
+    "taskflow_tasks_cancelled_total", "Tasks stopped on request", ["func_name"]
+)
 TASK_RETRIES = Counter(
     "taskflow_task_retries_total", "Individual retry attempts", ["func_name"]
 )

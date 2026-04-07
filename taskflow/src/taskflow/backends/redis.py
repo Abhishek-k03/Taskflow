@@ -14,6 +14,8 @@ Key layout:
     taskflow:index             sorted set of task_id by created_at, for listing
     taskflow:status:{status}   set of task_id per status, so counts are SCARD
     taskflow:metrics           hash of total_enqueued / total_dequeued
+    taskflow:worker:{id}       per-worker heartbeat, expiring on its own
+    taskflow:cancelled         set of task_id whose cancellation was requested
 
 Stream entries carry only the task_id - the task JSON lives in one place
 (taskflow:task:{id}) so a status update never has to rewrite a stream entry.
@@ -51,6 +53,7 @@ INDEX_KEY = f"{KEY_PREFIX}:index"
 STATUS_KEY = f"{KEY_PREFIX}:status:{{status}}"
 METRICS_KEY = f"{KEY_PREFIX}:metrics"
 WORKER_KEY = f"{KEY_PREFIX}:worker:{{worker_id}}"
+CANCEL_KEY = f"{KEY_PREFIX}:cancelled"
 
 
 class RedisQueueBackend(QueueBackend):
@@ -371,6 +374,20 @@ class RedisQueueBackend(QueueBackend):
         self._groups_ready = False
         await self._ensure_groups()
         logger.info("Queue cleared")
+
+    # --- cancellation ---------------------------------------------------
+
+    async def request_cancel(self, task_id: str) -> None:
+        """One shared set, so the request reaches whichever worker container
+        happens to hold the task - the api process cannot reach into another
+        process's memory to stop it."""
+        await self._redis.sadd(CANCEL_KEY, task_id)
+
+    async def is_cancel_requested(self, task_id: str) -> bool:
+        return bool(await self._redis.sismember(CANCEL_KEY, task_id))
+
+    async def clear_cancel_request(self, task_id: str) -> None:
+        await self._redis.srem(CANCEL_KEY, task_id)
 
     # --- worker heartbeats ---------------------------------------------
 

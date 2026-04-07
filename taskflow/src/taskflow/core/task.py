@@ -92,6 +92,13 @@ class Task:
         self.completed_at = now_utc()
         self.error = error
     
+    def mark_cancelled(self):
+        """Terminal, like completed or failed. Reached two ways: a queued
+        task cancelled before it ever ran, or a running one that the worker
+        resolved after the request came in."""
+        self.status = TaskStatus.CANCELLED
+        self.completed_at = now_utc()
+
     def mark_retrying(self):
         # retry_count is incremented by the caller (WorkerPool), which needs
         # the post-increment value to decide retry-vs-fail before calling

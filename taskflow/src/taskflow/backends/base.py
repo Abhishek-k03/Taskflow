@@ -80,6 +80,35 @@ class QueueBackend(ABC):
     async def get_failed_tasks(self) -> List[Task]:
         return await self.get_all_tasks(TaskStatus.FAILED)
 
+    async def request_cancel(self, task_id: str) -> None:
+        """Record that `task_id` should not run, or should stop if running.
+
+        Kept separate from the task's own status rather than just writing
+        CANCELLED, because the two answer different questions. A queued task
+        can be cancelled outright - it never ran, so CANCELLED is simply
+        true. A running one cannot: Python cannot kill the thread executing
+        it, so the honest state is "still running, and asked to stop". The
+        worker turns the request into a terminal CANCELLED once the function
+        actually returns.
+
+        Storing this in the backend rather than in the api process is what
+        makes it work at all after the role split - the worker that has to
+        honour the request is in a different container.
+        """
+        raise NotImplementedError
+
+    async def is_cancel_requested(self, task_id: str) -> bool:
+        """Has cancellation been requested for `task_id`?"""
+        raise NotImplementedError
+
+    async def clear_cancel_request(self, task_id: str) -> None:
+        """Forget the request, once the task has reached a terminal state.
+
+        Without this the record grows without bound, one entry per cancelled
+        task, forever.
+        """
+        raise NotImplementedError
+
     async def record_worker_heartbeat(
         self, worker_id: str, stats: dict, ttl_seconds: int
     ) -> None:

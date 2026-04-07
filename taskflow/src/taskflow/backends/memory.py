@@ -34,6 +34,7 @@ class MemoryQueueBackend(QueueBackend):
         # every read goes through - a Postgres outage never breaks task
         # submission or execution, it just stops accumulating history.
         self.store = store
+        self._cancel_requested: set[str] = set()
     
     async def enqueue(self, task: Task) -> bool:
         """Add a task to the queue
@@ -116,6 +117,18 @@ class MemoryQueueBackend(QueueBackend):
         except Exception as e:
             logger.error(f"Failed to persist task {task.task_id} to Postgres: {e}")
     
+    async def request_cancel(self, task_id: str) -> None:
+        async with self._lock:
+            self._cancel_requested.add(task_id)
+
+    async def is_cancel_requested(self, task_id: str) -> bool:
+        async with self._lock:
+            return task_id in self._cancel_requested
+
+    async def clear_cancel_request(self, task_id: str) -> None:
+        async with self._lock:
+            self._cancel_requested.discard(task_id)
+
     async def get_all_tasks(self, status: Optional[TaskStatus] = None) -> List[Task]:
         """Get all tasks, optionally filtered by status"""
         async with self._lock:
@@ -143,6 +156,7 @@ class MemoryQueueBackend(QueueBackend):
     async def clear(self):
         """Clear all tasks from queue"""
         async with self._lock:
+            self._cancel_requested.clear()
             while not self._queue.empty():
                 try:
                     self._queue.get_nowait()

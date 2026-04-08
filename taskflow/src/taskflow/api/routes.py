@@ -119,6 +119,70 @@ async def get_task(
     return TaskResponse(**task.to_dict())
 
 
+TERMINAL_STATUSES = (
+    TaskStatus.COMPLETED,
+    TaskStatus.FAILED,
+    TaskStatus.CANCELLED,
+)
+
+
+@router.post(
+    "/tasks/{task_id}/cancel",
+    dependencies=[Depends(require_api_key)],
+)
+async def cancel_task(
+    task_id: str,
+    queue: QueueBackend = Depends(get_queue),
+    store: Optional[TaskStore] = Depends(get_task_store),
+):
+    """Cancel a task.
+
+    What this can promise depends on where the task is:
+
+    - queued, and not yet picked up: cancelled outright. It never runs.
+    - running: the request is recorded and the worker honours it. Python
+      cannot kill the thread executing the function, so a task that never
+      calls is_cancelled() runs to completion and is only *recorded* as
+      cancelled afterwards. Reported as "cancelling" rather than "cancelled"
+      so the response does not overstate what happened.
+    - finished: 409. There is nothing left to stop, and rewriting a terminal
+      status would lose the record of what actually occurred.
+    """
+    task = await queue.get_task(task_id)
+    if task is None and store is not None:
+        task = await store.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+    if task.status in TERMINAL_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Task {task_id} already finished with status "
+                   f"'{task.status.value}' and cannot be cancelled",
+        )
+
+    # Recorded first either way: between reading the status above and acting
+    # on it, a queued task may have been picked up by a worker. Writing the
+    # request before the status means that worker still sees it.
+    await queue.request_cancel(task_id)
+
+    if task.status is TaskStatus.RUNNING:
+        return {
+            "message": f"Cancellation requested for task {task_id}",
+            "task_id": task_id,
+            "status": "cancelling",
+        }
+
+    task.mark_cancelled()
+    await queue.update_task(task)
+    await queue.clear_cancel_request(task_id)
+    return {
+        "message": f"Task {task_id} cancelled",
+        "task_id": task_id,
+        "status": task.status.value,
+    }
+
+
 async def _read_tasks(
     status: Optional[TaskStatus],
     limit: int,

@@ -12,7 +12,7 @@ from functools import partial
 from typing import Awaitable, Callable, Optional
 
 from .cancellation import TaskCancelled, _set_event
-from .task import Task
+from .task import Task, TaskStatus
 from ..backends.base import QueueBackend
 from .registry import task_registry
 from ..observability import (
@@ -122,18 +122,32 @@ class WorkerPool:
 
     async def _execute_task(self, task: Task, worker_id: int):
         # Cancelled while it sat in the queue: it never started, so this is
-        # simply true rather than a request to be honoured later. Checked
-        # before mark_running() so the task never briefly reports RUNNING.
-        if await self._cancelled_before_start(task):
+        # simply true rather than a request to be honoured later. Both checks
+        # happen before mark_running(), so the task never briefly reports
+        # RUNNING - and mark_running() would otherwise overwrite the very
+        # status that says it was cancelled.
+        #
+        # The stored status is checked as well as the pending request because
+        # the two arrive by different routes. Cancelling a queued task writes
+        # CANCELLED and then clears the request, since the task is already
+        # terminal and nothing is left to honour - so by the time a worker
+        # picks the entry up, the request is gone and the status is the only
+        # remaining evidence. Checking only the request ran the task anyway.
+        if task.status is TaskStatus.CANCELLED:
+            logger.info(
+                f"Skipping task {task.task_id}: cancelled before it was claimed",
+                extra={"task_id": task.task_id, "worker_id": self.worker_id},
+            )
+            await self._release(task)
+            return
+
+        if await self._cancel_requested(task):
             logger.info(
                 f"Task {task.task_id} was cancelled before it started",
                 extra={"task_id": task.task_id, "worker_id": self.worker_id},
             )
             await self._finish_cancelled(task)
-            try:
-                await self.queue.ack(task)
-            except Exception as e:
-                logger.error(f"Failed to ack task {task.task_id}: {e}")
+            await self._release(task)
             return
 
         logger.info(
@@ -250,8 +264,12 @@ class WorkerPool:
             logger.error(f"Failed to check cancellation for {task.task_id}: {e}")
             return False
 
-    async def _cancelled_before_start(self, task: Task) -> bool:
-        return await self._cancel_requested(task)
+    async def _release(self, task: Task) -> None:
+        """Give up this consumer's claim on the delivery."""
+        try:
+            await self.queue.ack(task)
+        except Exception as e:
+            logger.error(f"Failed to ack task {task.task_id}: {e}")
 
     async def _finish_cancelled(self, task: Task) -> None:
         """Terminal CANCELLED, plus cleanup of the request that caused it."""

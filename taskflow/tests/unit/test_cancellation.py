@@ -268,3 +268,45 @@ async def test_the_flag_does_not_persist_into_the_next_task(recording_sleep):
 
     assert seen == [False], "a stale cancellation flag leaked onto a pooled thread"
     assert done.result == "second"
+
+
+async def test_a_task_cancelled_via_the_api_flow_still_never_runs(recording_sleep):
+    """Regression: the API cancels a queued task by writing CANCELLED and
+    then clearing the request, because the task is already terminal. The
+    worker checked only the request, found it gone, and ran the task anyway
+    - reporting `completed` for something the user had cancelled.
+
+    This reproduces that exact sequence rather than the simpler one above,
+    which leaves the request in place and so never exercised it.
+    """
+    ran = threading.Event()
+
+    @task_registry.register("cancel_api_flow")
+    def never():
+        ran.set()
+        return "should not happen"
+
+    queue = MemoryQueueBackend()
+    task = Task(priority=2, func_name="cancel_api_flow")
+    await queue.enqueue(task)
+
+    # Exactly what POST /tasks/{id}/cancel does for a queued task.
+    await queue.request_cancel(task.task_id)
+    stored = await queue.get_task(task.task_id)
+    stored.mark_cancelled()
+    await queue.update_task(stored)
+    await queue.clear_cancel_request(task.task_id)
+
+    pool = WorkerPool(queue=queue, num_workers=1, sleep=recording_sleep)
+    await pool.start()
+    try:
+        # Give the worker real time to claim and run it, rather than only
+        # checking that it has not run yet.
+        await asyncio.sleep(0.5)
+    finally:
+        await pool.stop()
+
+    assert not ran.is_set(), "the cancelled task executed anyway"
+    final = await queue.get_task(task.task_id)
+    assert final.status is TaskStatus.CANCELLED
+    assert final.result is None

@@ -2,6 +2,7 @@
 
 import { Task, TaskStatus, statusColors, priorityLabels } from "@/types";
 import { formatDistanceToNow } from "@/lib/utils";
+import StatusIcon from "./StatusIcon";
 
 interface TaskCardProps {
   task: Task;
@@ -11,99 +12,6 @@ interface TaskCardProps {
 
 export default function TaskCard({ task, onSelect, index = 0 }: TaskCardProps) {
   const statusColor = statusColors[task.status as TaskStatus] || "bg-gray-500";
-
-  const statusIcons: Record<string, React.ReactNode> = {
-    [TaskStatus.PENDING]: (
-      <svg
-        className="w-3.5 h-3.5"
-        fill="none"
-        stroke="currentColor"
-        viewBox="0 0 24 24"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-        />
-      </svg>
-    ),
-    [TaskStatus.QUEUED]: (
-      <svg
-        className="w-3.5 h-3.5"
-        fill="none"
-        stroke="currentColor"
-        viewBox="0 0 24 24"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
-        />
-      </svg>
-    ),
-    [TaskStatus.RUNNING]: (
-      <svg
-        className="w-3.5 h-3.5 animate-spin"
-        fill="none"
-        stroke="currentColor"
-        viewBox="0 0 24 24"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-        />
-      </svg>
-    ),
-    [TaskStatus.COMPLETED]: (
-      <svg
-        className="w-3.5 h-3.5"
-        fill="none"
-        stroke="currentColor"
-        viewBox="0 0 24 24"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M5 13l4 4L19 7"
-        />
-      </svg>
-    ),
-    [TaskStatus.FAILED]: (
-      <svg
-        className="w-3.5 h-3.5"
-        fill="none"
-        stroke="currentColor"
-        viewBox="0 0 24 24"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M6 18L18 6M6 6l12 12"
-        />
-      </svg>
-    ),
-    [TaskStatus.RETRYING]: (
-      <svg
-        className="w-3.5 h-3.5"
-        fill="none"
-        stroke="currentColor"
-        viewBox="0 0 24 24"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-        />
-      </svg>
-    ),
-  };
 
   const priorityColors: Record<number, string> = {
     0: "text-red-400 bg-red-900/30",
@@ -130,7 +38,7 @@ export default function TaskCard({ task, onSelect, index = 0 }: TaskCardProps) {
             <span
               className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-full text-white ${statusColor}`}
             >
-              {statusIcons[task.status as TaskStatus]}
+              <StatusIcon status={task.status} className="w-3.5 h-3.5" />
               {task.status}
             </span>
             <span

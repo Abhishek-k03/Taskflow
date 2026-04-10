@@ -1,9 +1,20 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Task, TaskStatus, statusColors, priorityLabels } from "@/types";
 import { formatDateTime } from "@/lib/utils";
+import { taskApi } from "@/lib/api";
 import { useWebSocket } from "@/contexts/WebSocketContext";
+import { useToast } from "./Toast";
+import StatusIcon from "./StatusIcon";
+
+// A finished task has nothing left to stop, and the API refuses it with a
+// 409 - so the control is not offered in the first place.
+const TERMINAL_STATUSES: string[] = [
+  TaskStatus.COMPLETED,
+  TaskStatus.FAILED,
+  TaskStatus.CANCELLED,
+];
 
 interface TaskDetailsProps {
   task: Task;
@@ -12,7 +23,31 @@ interface TaskDetailsProps {
 
 export default function TaskDetails({ task, onClose }: TaskDetailsProps) {
   const { subscribe, unsubscribe } = useWebSocket();
+  const { notify } = useToast();
+  const [cancelling, setCancelling] = useState(false);
   const statusColor = statusColors[task.status as TaskStatus] || "bg-gray-500";
+  const canCancel = !TERMINAL_STATUSES.includes(task.status);
+
+  const handleCancel = async () => {
+    setCancelling(true);
+    try {
+      const response = await taskApi.cancel(task.task_id);
+      // "cancelling" means the worker was asked but the thread is still
+      // running - saying "cancelled" here would claim more than happened.
+      notify(
+        response.status === "cancelling"
+          ? "Cancellation requested - the task will stop when it can"
+          : "Task cancelled",
+      );
+    } catch (err) {
+      notify(
+        err instanceof Error ? err.message : "Could not cancel the task",
+        "error",
+      );
+    } finally {
+      setCancelling(false);
+    }
+  };
 
   useEffect(() => {
     // Subscribe to task updates
@@ -28,69 +63,6 @@ export default function TaskDetails({ task, onClose }: TaskDetailsProps) {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
-
-  const statusIcons: Record<string, React.ReactNode> = {
-    [TaskStatus.PENDING]: (
-      <svg
-        className="w-4 h-4"
-        fill="none"
-        stroke="currentColor"
-        viewBox="0 0 24 24"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-        />
-      </svg>
-    ),
-    [TaskStatus.RUNNING]: (
-      <svg
-        className="w-4 h-4 animate-spin"
-        fill="none"
-        stroke="currentColor"
-        viewBox="0 0 24 24"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-        />
-      </svg>
-    ),
-    [TaskStatus.COMPLETED]: (
-      <svg
-        className="w-4 h-4"
-        fill="none"
-        stroke="currentColor"
-        viewBox="0 0 24 24"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M5 13l4 4L19 7"
-        />
-      </svg>
-    ),
-    [TaskStatus.FAILED]: (
-      <svg
-        className="w-4 h-4"
-        fill="none"
-        stroke="currentColor"
-        viewBox="0 0 24 24"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M6 18L18 6M6 6l12 12"
-        />
-      </svg>
-    ),
-  };
 
   return (
     <div
@@ -151,7 +123,7 @@ export default function TaskDetails({ task, onClose }: TaskDetailsProps) {
             <span
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-full text-white ${statusColor}`}
             >
-              {statusIcons[task.status as TaskStatus]}
+              <StatusIcon status={task.status} />
               {task.status}
             </span>
             <span className="text-sm text-gray-300 bg-gray-800 px-3 py-1.5 rounded-full font-medium">
@@ -174,6 +146,15 @@ export default function TaskDetails({ task, onClose }: TaskDetailsProps) {
                 </svg>
                 Retries: {task.retry_count}
               </span>
+            )}
+            {canCancel && (
+              <button
+                onClick={handleCancel}
+                disabled={cancelling}
+                className="ml-auto text-sm font-medium px-3 py-1.5 rounded-full border border-red-800/60 bg-red-900/30 text-red-300 hover:bg-red-900/60 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {cancelling ? "Cancelling..." : "Cancel task"}
+              </button>
             )}
           </div>
 

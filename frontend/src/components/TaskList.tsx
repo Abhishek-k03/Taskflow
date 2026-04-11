@@ -68,6 +68,7 @@ export default function TaskList() {
     { value: TaskStatus.COMPLETED, label: "Completed" },
     { value: TaskStatus.FAILED, label: "Failed" },
     { value: TaskStatus.RETRYING, label: "Retrying" },
+    { value: TaskStatus.CANCELLED, label: "Cancelled" },
   ];
 
   // The server already applied the status filter, but a task can change

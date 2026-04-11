@@ -60,6 +60,11 @@ export const taskApi = {
       body: JSON.stringify(taskData),
     }),
 
+  cancel: (
+    taskId: string,
+  ): Promise<{ message: string; task_id: string; status: string }> =>
+    fetchApi(`tasks/${encodeURIComponent(taskId)}/cancel`, { method: "POST" }),
+
   list: (
     status?: string,
     limit: number = 100,

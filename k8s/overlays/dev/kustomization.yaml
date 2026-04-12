@@ -33,10 +33,26 @@ patches:
       kind: PodDisruptionBudget
       metadata:
         name: api
-  # Locally built images are not in a registry.
+  # Locally built images are not in a registry, so never go looking for one.
+  #
+  # IfNotPresent rather than Never, which is what this used to say. Never
+  # assumes the image is already in the node's own image store, which is true
+  # after `kind load docker-image` and false on Docker Desktop, where the
+  # node pulls through a mirror that serves the host's images instead - every
+  # pod there failed with ErrImageNeverPull. IfNotPresent works on both.
+  #
+  # Jobs are patched too. The migrate Job was missed by the Deployment-only
+  # target and fell back to Kubernetes' default of Always for a :latest tag,
+  # so it re-pulled on every run.
   - target:
       kind: Deployment
     patch: |-
-      - op: replace
+      - op: add
         path: /spec/template/spec/containers/0/imagePullPolicy
-        value: Never
+        value: IfNotPresent
+  - target:
+      kind: Job
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: IfNotPresent

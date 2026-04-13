@@ -53,6 +53,12 @@ spec:
               port: 3000
             initialDelaySeconds: 5
             periodSeconds: 10
+            # `/` is a server-rendered route, not a static file, and the
+            # default 1s timeout is not enough for the first render on a
+            # cold process: on a live cluster this pod served in 127ms but
+            # still took ~60s to pass readiness, failing the probe three
+            # times over before its first render landed inside the second.
+            timeoutSeconds: 5
           resources:
             requests:
               cpu: 100m

@@ -13,7 +13,7 @@ kubectl apply -k k8s/overlays/prod    # pinned images, real replica counts
 |---|---|---|---|
 | api / worker / frontend replicas | 2 / 2 / 2 | 1 / 1 / 1 | 3 / 4 / 2 |
 | HPA + PodDisruptionBudget | yes | removed | yes |
-| images | `:latest`, local | `:latest`, `imagePullPolicy: Never` | registry, pinned to `1.0.0` |
+| images | `:latest`, local | `:latest`, `imagePullPolicy: IfNotPresent` | registry, pinned to `1.0.0` |
 
 `dev` drops the HPA and PDB because a one-node cluster has nothing to
 autoscale onto and a PDB with one replica blocks node drains.
@@ -42,22 +42,42 @@ autoscale onto and a PDB with one replica blocks node drains.
 - **The Secret in `config.yaml` is a placeholder.** Real deployments should
   source it from a secret manager rather than a manifest in git.
 
-## Not yet verified against a live cluster
+## Verified against a live cluster
 
-These manifests build cleanly (`kubectl kustomize`) and pass structural
-checks, but they have **not** been applied to a running cluster - none is
-available on this machine (`kind`, `minikube`, `k3d` and `helm` are all
-absent, and Docker Desktop's Kubernetes has never been enabled).
+Applied to Docker Desktop's Kubernetes (`desktop-control-plane`, v1.34.3)
+with the `dev` overlay. All pods reached Ready, and in-cluster: a task
+submitted to the `api` Service was executed by a `worker` pod and returned
+its result; a running task was cancelled and resolved to `CANCELLED`;
+`/health` aggregated worker heartbeats across pods even though the api pod
+runs no workers of its own; the scheduler acquired the Redis leader lock;
+and the frontend Service served both `/` and the `/api` proxy.
 
-To actually try them:
+Two things the apply caught that `kubectl kustomize` could not:
 
-1. Enable Kubernetes in Docker Desktop (Settings → Kubernetes), or
+- **`imagePullPolicy: Never` broke every pod.** `Never` assumes the image is
+  already in the node's own store, which holds after `kind load
+  docker-image` but not on Docker Desktop, whose node pulls through a mirror
+  serving the host's images. Every workload came up `ErrImageNeverPull`.
+  Now `IfNotPresent`, which works on both. The same patch was also
+  Deployment-only, so the migrate Job fell through to Kubernetes' default of
+  `Always` for a `:latest` tag.
+- **The frontend readiness probe was too tight.** `/` is a server-rendered
+  route and the probe used the default 1s timeout, so a pod serving in 127ms
+  still took about a minute to go Ready. Now `timeoutSeconds: 5`.
+
+To reproduce:
+
+1. Enable Kubernetes in Docker Desktop (Settings, then Kubernetes), or
    `choco install kind` and `kind create cluster`.
-2. Build the images so `imagePullPolicy: Never` can find them:
+2. Build the images under the names the manifests reference:
    `docker build -t taskflow-backend:latest ./taskflow`
    `docker build -t taskflow-frontend:latest ./frontend`
    (with `kind`, also `kind load docker-image taskflow-backend:latest`)
 3. `kubectl apply -k k8s/overlays/dev`
 4. `kubectl -n taskflow wait --for=condition=available deploy --all --timeout=300s`
+
+Re-applying over a **completed** migrate Job fails with `field is immutable`
+- a Job's pod template cannot be changed once it exists. Run
+`kubectl -n taskflow delete job migrate` first.
 
 The Ingress additionally needs an ingress-nginx controller installed.

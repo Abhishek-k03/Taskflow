@@ -2,8 +2,16 @@
   examples/websocket_client.html
 
   Minimal WebSocket demo for TaskFlow.
-  Run the server first: python main.py
-  Then open this file directly in a browser.
+
+  Start the stack first, from the repository root:
+      docker compose up --build
+  then open this file directly in a browser.
+
+  The socket needs an API key. Browsers cannot set headers on a WebSocket,
+  so it goes in a ?token= query parameter instead - without it the server
+  rejects the handshake with 403 before the connection is ever established.
+  Compose defaults the key to `local-dev-key`; edit API_KEY below if yours
+  differs, or append ?token=<key> to this page's own URL.
 -->
 <!DOCTYPE html>
 <html lang="en">
@@ -36,7 +44,13 @@
   <div id="log"></div>
 
   <script>
-    const WS_URL = "ws://localhost:8000/ws";
+    // Taken from this page's own query string when present, so the key does
+    // not have to be edited into the file: open the page as
+    // websocket_client.html?token=your-key
+    const API_KEY =
+      new URLSearchParams(location.search).get("token") || "local-dev-key";
+    const WS_URL =
+      "ws://localhost:8000/ws?token=" + encodeURIComponent(API_KEY);
     const statusEl = document.getElementById("status");
     const logEl = document.getElementById("log");
     let ws;
@@ -54,7 +68,8 @@
       ws.onopen = () => {
         statusEl.textContent = "connected";
         statusEl.className = "connected";
-        log("Connected to " + WS_URL);
+        // WS_URL carries the key, so log the path without the query string.
+        log("Connected to " + WS_URL.split("?")[0]);
       };
 
       ws.onmessage = (event) => {

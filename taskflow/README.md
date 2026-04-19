@@ -1,29 +1,32 @@
 # TaskFlow - Modern Task Scheduling System
 
-A lightweight, production-ready task scheduling and execution system built with Python and FastAPI. Execute tasks asynchronously with priorities, retries, and real-time monitoring.
+A distributed task scheduling and execution system built with Python and FastAPI, around a
+hand-written priority queue, worker pool, and cron scheduler. Executes tasks asynchronously with
+priorities, retries, timeouts, and cancellation, across independently scalable processes.
 
 ## Scope & Design Goals
 
-TaskFlow is intentionally designed as a **single-node task execution system**.
+TaskFlow runs as **three independently scalable processes over shared state** - an API, a
+worker pool, and a scheduler - all from one image, selected by `TASKFLOW_ROLE`.
 
 ### In scope
 
-- Background task execution with priorities
-- Retries with exponential backoff
-- Timeout enforcement
-- Periodic (cron-based) scheduling
-- REST and WebSocket APIs
-- Observable task lifecycle and metrics
+- Background task execution with priorities, FIFO within a priority
+- Retries with exponential backoff, timeout enforcement, cooperative cancellation
+- Periodic (cron-based) scheduling, evaluated in UTC
+- Durable history in Postgres; a Redis Streams queue with orphan recovery
+- Horizontally scalable workers; a leader-locked singleton scheduler
+- REST and WebSocket APIs, API key auth, Prometheus metrics
 
 ### Out of scope (by design)
 
-- Distributed workers
-- Durable queues (e.g., Redis, Kafka)
-- Exactly-once delivery guarantees
-- Multi-node coordination
-
-These tradeoffs keep the system easy to reason about, test, and extend,
-while leaving a clear path for future distributed implementations.
+- **Exactly-once delivery.** Redis Streams give at-least-once: a worker that dies mid-task has
+  its entry reclaimed and re-run, so task functions should be idempotent.
+- **Task dependency graphs.** `depends_on` exists on the model and nothing reads it; a real
+  implementation needs cycle detection and partial-failure semantics.
+- **Multi-tenancy.** API keys were chosen over user accounts; there is no per-user isolation.
+- **A third-party broker.** The queue engine is hand-written on purpose - swapping in Celery
+  would remove the point of the project.
 
 ## Features
 
@@ -58,17 +61,22 @@ to execute only after prerequisite tasks complete successfully.
 
 ## Installation
 
+The whole stack, from the repository root:
+
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/taskflow.git
+docker compose up --build
+```
+
+Or install the package for local development:
+
+```bash
 cd taskflow
-
-# Create virtual environment
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+source venv/bin/activate        # Windows: venv\Scripts\activate
 
-# Install dependencies
-pip install -r requirements.txt
+# src/ layout, so an editable install is what puts `taskflow` on the path.
+# There is no requirements.txt; dependencies live in pyproject.toml.
+pip install -e ".[dev]"
 ```
 
 ## Quick Start
@@ -93,24 +101,35 @@ def process_data(data: list):
 
 ### 2. Start the Server
 
-```python
-# In main.py, import your tasks
-from examples.sample_tasks import *  # This registers all tasks
+Which modules get imported is configuration, not code - point `TASKFLOW_TASK_MODULES` at yours
+(comma-separated) and every role imports them at startup:
 
-# Run the server
-python main.py
+```bash
+export TASKFLOW_TASK_MODULES=taskflow.tasks.builtin,my_tasks
+taskflow                        # or: python main.py
 ```
 
-Server will start at `http://localhost:8000`
+Server starts at `http://localhost:8000`. Startup fails loudly if a module cannot be imported or
+the registry ends up empty, rather than letting every later submission 404 with nothing pointing
+at the cause. Check what registered:
+
+```bash
+taskflow tasks list
+```
 
 ### 3. Submit Tasks via API
 
 ```python
 import requests
 
+# Mutating endpoints need an API key; reads do not. Compose defaults it to
+# `local-dev-key` - see TASKFLOW_API_KEYS.
+headers = {"X-API-Key": "local-dev-key"}
+
 # Submit a task
 response = requests.post(
     "http://localhost:8000/api/v1/tasks",
+    headers=headers,
     json={
         "func_name": "send_email",
         "kwargs": {
@@ -148,15 +167,31 @@ Once the server is running:
 
 ### Key Endpoints
 
-| Method | Endpoint                                | Description           |
-| ------ | --------------------------------------- | --------------------- |
-| POST   | `/api/v1/tasks`                         | Submit a new task     |
-| GET    | `/api/v1/tasks/{task_id}`               | Get task status       |
-| GET    | `/api/v1/tasks`                         | List all tasks        |
-| GET    | `/api/v1/metrics`                       | System metrics        |
-| POST   | `/api/v1/periodic-tasks`                | Create periodic task  |
-| GET    | `/api/v1/periodic-tasks`                | List periodic tasks   |
-| POST   | `/api/v1/periodic-tasks/{name}/trigger` | Trigger periodic task |
+Endpoints marked *key* require an `X-API-Key` header.
+
+| Method | Endpoint                                | Description                       | Auth |
+| ------ | --------------------------------------- | --------------------------------- | ---- |
+| POST   | `/api/v1/tasks`                         | Submit a new task                 | key  |
+| GET    | `/api/v1/tasks/{task_id}`               | Get task status                   |      |
+| GET    | `/api/v1/tasks`                         | List tasks (`?status=`, `?limit=`) |     |
+| POST   | `/api/v1/tasks/{task_id}/cancel`        | Cancel a task                     | key  |
+| GET    | `/api/v1/metrics`                       | System metrics (JSON)             |      |
+| GET    | `/api/v1/registered-tasks`              | Available task functions          |      |
+| POST   | `/api/v1/periodic-tasks`                | Create periodic task              | key  |
+| GET    | `/api/v1/periodic-tasks`                | List periodic tasks               |      |
+| POST   | `/api/v1/periodic-tasks/{name}/trigger` | Trigger periodic task             | key  |
+| DELETE | `/api/v1/periodic-tasks/{name}`         | Delete periodic task              | key  |
+| GET    | `/health`                               | Queue + worker summary            |      |
+| GET    | `/health/live`                          | Process up; checks nothing else   |      |
+| GET    | `/health/ready`                         | Dependencies reachable            |      |
+| GET    | `/metrics/prometheus`                   | Prometheus exposition format      |      |
+
+`/metrics` and `/metrics/prometheus` are deliberately different paths: the dashboard consumes
+the JSON one, so serving Prometheus text there would break it.
+
+`/health/live` and `/health/ready` are deliberately different too. Liveness checks nothing
+external, because Kubernetes restarts a pod that fails it - a brief Redis blip would otherwise
+restart every pod at once.
 
 ## Periodic Tasks (Cron)
 
@@ -165,9 +200,12 @@ Schedule tasks to run automatically:
 ```python
 import requests
 
-# Run every day at 2 AM
+headers = {"X-API-Key": "local-dev-key"}
+
+# Run every day at 2 AM UTC
 requests.post(
     "http://localhost:8000/api/v1/periodic-tasks",
+    headers=headers,
     json={
         "name": "daily_backup",
         "func_name": "database_backup",
@@ -179,10 +217,12 @@ requests.post(
 # Run every 5 minutes
 requests.post(
     "http://localhost:8000/api/v1/periodic-tasks",
+    headers=headers,
     json={
-        "name": "health_check",
-        "func_name": "check_system_health",
-        "cron_expression": "*/5 * * * *"
+        "name": "hourly_cleanup",
+        "func_name": "cleanup_old_files",
+        "cron_expression": "*/5 * * * *",
+        "kwargs": {"days_old": 7}
     }
 )
 ```
@@ -213,8 +253,9 @@ TaskPriority.LOW       # 3 - lowest priority
 ## WebSocket Real-time Updates
 
 ```javascript
-// Connect to WebSocket
-const ws = new WebSocket("ws://localhost:8000/ws");
+// Browsers cannot set headers on a WebSocket, so the key goes in ?token=.
+// Without it the server rejects the handshake with 403.
+const ws = new WebSocket("ws://localhost:8000/ws?token=local-dev-key");
 
 ws.onopen = () => {
   // Subscribe to specific task
@@ -235,24 +276,31 @@ ws.onmessage = (event) => {
 
 ## Configuration
 
-Edit configuration in `taskflow/config.py`:
+Everything is environment variables, read through pydantic-settings with a `TASKFLOW_` prefix.
+`config.py` has no `Config` class to edit.
 
-```python
-class Config:
-    # Worker pool size
-    NUM_WORKERS = 4
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `TASKFLOW_ROLE` | `all` | `api`, `worker`, `scheduler`, or `all` |
+| `TASKFLOW_NUM_WORKERS` | `4` | Threads per worker process |
+| `TASKFLOW_QUEUE_BACKEND` | `memory` | `memory` or `redis` |
+| `TASKFLOW_REDIS_URL` | `redis://localhost:6379` | Used when backend is `redis` |
+| `TASKFLOW_DATABASE_URL` | unset | Postgres DSN; history is skipped when unset |
+| `TASKFLOW_TASK_MODULES` | `taskflow.tasks.builtin` | Comma-separated, imported at startup |
+| `TASKFLOW_API_KEYS` | unset | Comma-separated; auth is off when unset |
+| `TASKFLOW_CORS_ORIGINS` | `http://localhost:3000` | Comma-separated |
+| `TASKFLOW_MAX_QUEUE_SIZE` | `0` | 0 = unlimited |
+| `TASKFLOW_DEFAULT_MAX_RETRIES` | `3` | |
+| `TASKFLOW_DEFAULT_TIMEOUT` | unset | Seconds; no timeout unless a task sets one |
+| `TASKFLOW_LOG_LEVEL` | `INFO` | |
+| `TASKFLOW_HOST` / `TASKFLOW_PORT` | `0.0.0.0` / `8000` | |
+| `TASKFLOW_JSON_LOGS` | `false` | Structured logs with `task_id` correlation |
 
-    # Queue settings
-    MAX_QUEUE_SIZE = 0  # 0 = unlimited
+`role` is what lets one image run as three different containers.
 
-    # Task defaults
-    DEFAULT_MAX_RETRIES = 3
-    DEFAULT_TIMEOUT = 300  # seconds
-
-    # Server settings
-    HOST = "0.0.0.0"
-    PORT = 8000
-```
+**Cron is evaluated in UTC.** Containers default to UTC while a developer machine usually does
+not, so this is fixed rather than inherited from the host - otherwise `"0 2 * * *"` would mean a
+different time of day in Docker than it did locally.
 
 ## Monitoring
 
@@ -276,43 +324,43 @@ health = response.json()
 print(health)
 ```
 
-## 🧪 Testing
+## Testing
 
 ```bash
-# Run tests
-pytest tests/
-
-# Run with coverage
-pytest --cov=taskflow tests/
+pytest                          # unit + integration; no server, no network
+pytest -m e2e                   # against a running stack (see TASKFLOW_E2E_URL)
+pytest --cov=taskflow
 ```
+
+Tests needing Postgres or Redis skip themselves unless `TASKFLOW_TEST_DATABASE_URL` /
+`TASKFLOW_TEST_REDIS_URL` point at one. `e2e` and `slow` are excluded by default.
+
+One gotcha: the Redis integration tests join the same consumer group as a running `worker`
+container, which will steal their tasks. Stop it first (`docker compose stop worker`).
 
 ## Future Enhancements
 
-Planned improvements based on real-world task system bottlenecks:
+Persistent storage, distributed workers, distributed locks, scheduler leader election, and
+Docker/Kubernetes deployment were all on this list and are now implemented. What remains:
 
-- Persistent task storage (SQLite / Postgres)
-- Distributed worker support
+- Dead-letter queue for tasks that exhaust their retries, with a requeue endpoint
+- Keyset pagination on `GET /tasks`
+- Per-key rate limiting and payload size caps
+- Retention/purge of task history past N days
 - Failure classification for smarter retry strategies
-- Resource-aware scheduling
 - Task dependency graphs (DAG execution)
-
-### Distributed Version
-
-To scale beyond a single machine:
-
-- Replace in-memory queue with Redis Streams
-- Add worker registration and discovery
-- Implement distributed locks
-- Add leader election for scheduler
-- Deploy with Docker/Kubernetes
+- OpenTelemetry tracing
 
 ## Examples
 
-See `examples/` directory for:
+See the `examples/` directory:
 
-- `sample_tasks.py` - Example task definitions
-- `usage_example.py` - API usage examples
-- `websocket_client.html` - WebSocket demo
+- `usage_example.py` - walks the whole API from the command line, cancellation included
+- `websocket_client.html` - standalone page for watching live task events
+
+Task definitions used to live here as `sample_tasks.py`; they are part of the package now, at
+`taskflow/tasks/builtin.py`, because every role has to import them to resolve a function by name
+at execution time.
 
 ## Contributing
 

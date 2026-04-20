@@ -54,9 +54,19 @@ per request; `/ws` is a `next.config.ts` rewrite, so unlike the other two,
 its backend target is fixed at build time (Next has no App Router API for
 proxying a WebSocket upgrade).
 
-| Variable                | Default                  | Description                    |
-| ------------------------ | ------------------------- | -------------------------------- |
-| `TASKFLOW_BACKEND_URL`  | `http://localhost:8000`  | Backend URL, server-side only  |
+| Variable               | Default                 | Description                             |
+| ---------------------- | ----------------------- | --------------------------------------- |
+| `TASKFLOW_BACKEND_URL` | `http://localhost:8000` | Backend URL, server-side only           |
+| `TASKFLOW_API_KEY`     | unset                   | Sent as `X-API-Key` on proxied requests |
+
+`TASKFLOW_API_KEY` is what keeps the dashboard working against a backend with
+auth enabled: the browser never holds a key, and this server attaches it on the
+way through. Without it every mutating action fails with 401 and the socket
+handshake is rejected with 403, since the key is also appended to `/ws` as
+`?token=`. Compose passes `local-dev-key` by default.
+
+Note that `/ws` gets its key at **build** time, not request time - it is a
+rewrite, so changing the key for the socket means rebuilding the image.
 
 ## Project Structure
 

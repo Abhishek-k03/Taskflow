@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState, useEffect } from "react";
-import { PeriodicTask, TaskPriority, priorityLabels } from "@/types";
+import { TaskPriority, priorityLabels } from "@/types";
 import { periodicTaskApi, systemApi } from "@/lib/api";
 import { useApiResource } from "@/hooks/useApiResource";
 import { useToast } from "./Toast";

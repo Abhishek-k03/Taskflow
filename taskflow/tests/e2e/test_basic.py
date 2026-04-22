@@ -1,20 +1,18 @@
-import os
-
-import requests
 import time
+
 import pytest
+
+from .client import BASE_URL, api
 
 pytestmark = pytest.mark.e2e
 
-BASE_URL = f"{os.environ.get('TASKFLOW_E2E_URL', 'http://localhost:8000')}/api/v1"
-
 
 def test_basic_flow():
-    resp = requests.get(f"{BASE_URL}/registered-tasks")
+    resp = api.get(f"{BASE_URL}/registered-tasks")
     assert resp.status_code == 200
     assert "add_numbers" in resp.json()["tasks"]
 
-    resp = requests.post(
+    resp = api.post(
         f"{BASE_URL}/tasks",
         json={"func_name": "add_numbers", "kwargs": {"a": 5, "b": 3}},
     )
@@ -22,7 +20,7 @@ def test_basic_flow():
     task_id = resp.json()["task_id"]
 
     for _ in range(10):
-        resp = requests.get(f"{BASE_URL}/tasks/{task_id}")
+        resp = api.get(f"{BASE_URL}/tasks/{task_id}")
         assert resp.status_code == 200
         task = resp.json()
         if task["status"] == "completed":
@@ -32,6 +30,6 @@ def test_basic_flow():
     else:
         raise AssertionError("Task did not complete in time")
 
-    resp = requests.get(f"{BASE_URL}/metrics")
+    resp = api.get(f"{BASE_URL}/metrics")
     assert resp.status_code == 200
     assert resp.json()["queue"]["completed_count"] >= 1

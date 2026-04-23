@@ -69,11 +69,15 @@ async def test_retry_backoff_sequence_and_final_failure(recording_sleep):
         await pool.stop(wait=False)
 
     # 3 retries -> exponential backoff 2^0, 2^1, 2^2, and exactly one
-    # retry_count increment per attempt (regression test for the
+    # retry_count increment per retry (regression test for the
     # double-increment bug the mark_retrying() fix addressed).
     assert recording_sleep.delays == [1, 2, 4]
     assert finished.status == TaskStatus.FAILED
-    assert finished.retry_count == 4
+    # Equal to max_retries, not one past it: the task took 4 attempts, of
+    # which 3 were retries. This asserted 4 while the fatal attempt still
+    # incremented the counter on its way out.
+    assert finished.retry_count == 3
+    assert finished.retry_count == task.max_retries
     assert "boom" in finished.error
 
 

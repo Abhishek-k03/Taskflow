@@ -285,10 +285,16 @@ class WorkerPool:
             )
 
     async def _handle_task_failure(self, task: Task, error_msg: str):
-        # Increment retry count FIRST
-        task.retry_count += 1
-
-        if task.retry_count > task.max_retries:
+        # Checked before incrementing, so retry_count counts retries actually
+        # taken and never exceeds max_retries. Incrementing first meant the
+        # fatal attempt bumped it one last time on its way out: a task allowed
+        # 2 retries ended up reporting retry_count=3, which the dashboard
+        # rendered as "Retries: 3" against a maximum of 2, and which this very
+        # method had to write around by logging `retry_count - 1`.
+        #
+        # The number of attempts is unchanged - max_retries=N still means one
+        # initial run plus N retries - and so is the backoff sequence.
+        if task.retry_count >= task.max_retries:
             task.mark_failed(error_msg)
             await self.queue.update_task(task)
             await self._emit_event("task_failed", task)
@@ -298,11 +304,12 @@ class WorkerPool:
             ).inc()
             logger.error(
                 f"Task {task.task_id} failed permanently after "
-                f"{task.retry_count - 1} retries",
+                f"{task.retry_count} retries",
                 extra={"task_id": task.task_id, "worker_id": self.worker_id},
             )
             return
 
+        task.retry_count += 1
         TASK_RETRIES.labels(func_name=task.func_name).inc()
         task.mark_retrying()
         await self.queue.update_task(task)

@@ -76,6 +76,30 @@ To reproduce:
 3. `kubectl apply -k k8s/overlays/dev`
 4. `kubectl -n taskflow wait --for=condition=available deploy --all --timeout=300s`
 
+### Redeploying after a code change
+
+`:latest` with `imagePullPolicy: IfNotPresent` will **not** pick up a rebuilt
+image. The node already has something tagged `taskflow-backend:latest`, so it
+keeps using it - the pods restart and quietly run the old code, which is
+exactly as confusing as it sounds. It was caught here by a fix that was
+provably in the image and provably not in the cluster.
+
+With `kind`, `kind load docker-image` overwrites the node's copy, so a rebuild
+is picked up. On Docker Desktop nothing overwrites it. Use a unique tag:
+
+```bash
+TAG=$(date +%s)
+docker build -t taskflow-backend:$TAG ./taskflow
+kubectl -n taskflow set image deploy/api api=taskflow-backend:$TAG
+kubectl -n taskflow set image deploy/worker worker=taskflow-backend:$TAG
+```
+
+or, to keep it in the overlay:
+
+```bash
+cd k8s/overlays/dev && kustomize edit set image taskflow-backend=taskflow-backend:$TAG
+```
+
 Re-applying over a **completed** migrate Job fails with `field is immutable`
 - a Job's pod template cannot be changed once it exists. Run
 `kubectl -n taskflow delete job migrate` first.
